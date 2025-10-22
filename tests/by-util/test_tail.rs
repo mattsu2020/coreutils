@@ -3898,6 +3898,7 @@ fn test_args_when_settings_check_warnings_then_shows_warnings() {
         "tail: warning: --retry ignored; --retry is useful only when following{newline}\
         {file_line}{newline}"
     );
+    let expected_stdout = expected_stdout.replace('\n', newline);
     scene
         .ucmd()
         .args(&["--retry", "data"])
@@ -3909,6 +3910,7 @@ fn test_args_when_settings_check_warnings_then_shows_warnings() {
         "tail: warning: --retry only effective for the initial open{newline}\
         {file_line}{newline}"
     );
+    let expected_stdout = expected_stdout.replace('\n', newline);
     let mut child = scene
         .ucmd()
         .args(&["--follow=descriptor", "--retry", "data"])
@@ -3926,6 +3928,7 @@ fn test_args_when_settings_check_warnings_then_shows_warnings() {
         "tail: warning: PID ignored; --pid=PID is useful only when following{newline}\
         {file_line}{newline}"
     );
+    let expected_stdout = expected_stdout.replace('\n', newline);
     scene
         .ucmd()
         .args(&["--pid=1000", "data"])
@@ -3938,6 +3941,7 @@ fn test_args_when_settings_check_warnings_then_shows_warnings() {
         tail: warning: PID ignored; --pid=PID is useful only when following{newline}\
         {file_line}{newline}"
     );
+    let expected_stdout = expected_stdout.replace('\n', newline);
     scene
         .ucmd()
         .args(&["--pid=1000", "--retry", "data"])
