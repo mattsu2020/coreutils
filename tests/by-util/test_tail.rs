@@ -3893,10 +3893,11 @@ fn test_args_when_settings_check_warnings_then_shows_warnings() {
     let newline = if cfg!(windows) { "\r\n" } else { "\n" };
     let file_data = format!("file data{newline}");
     at.write("data", &file_data);
+    let file_data_trimmed = file_data.trim_end_matches(&['\r', '\n'][..]);
 
     let expected_stdout = format!(
         "tail: warning: --retry ignored; --retry is useful only when following\n\
-        {file_data}"
+        {file_data_trimmed}"
     )
     .replace('\n', newline);
     scene
@@ -3908,7 +3909,7 @@ fn test_args_when_settings_check_warnings_then_shows_warnings() {
 
     let expected_stdout = format!(
         "tail: warning: --retry only effective for the initial open\n\
-        {file_data}"
+        {file_data_trimmed}"
     )
     .replace('\n', newline);
     let mut child = scene
@@ -3926,7 +3927,7 @@ fn test_args_when_settings_check_warnings_then_shows_warnings() {
 
     let expected_stdout = format!(
         "tail: warning: PID ignored; --pid=PID is useful only when following\n\
-        {file_data}"
+        {file_data_trimmed}"
     )
     .replace('\n', newline);
     scene
@@ -3939,7 +3940,7 @@ fn test_args_when_settings_check_warnings_then_shows_warnings() {
     let expected_stdout = format!(
         "tail: warning: --retry ignored; --retry is useful only when following\n\
         tail: warning: PID ignored; --pid=PID is useful only when following\n\
-        {file_data}"
+        {file_data_trimmed}"
     )
     .replace('\n', newline);
     scene
