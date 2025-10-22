@@ -37,6 +37,8 @@ use uucore::selinux::{
 use uucore::translate;
 use uucore::{format_usage, show, show_error, show_if_err};
 
+#[cfg(windows)]
+use std::os::windows::ffi::OsStrExt;
 #[cfg(unix)]
 use std::os::{
     fd::BorrowedFd,
@@ -599,7 +601,133 @@ fn create_dir_all_for_install(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn create_dir_all_for_install(path: &Path) -> io::Result<()> {
+    use std::env;
+    use std::path::{Component, PathBuf, Prefix};
+    use windows_sys::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError};
+    use windows_sys::Win32::Storage::FileSystem::{
+        CreateDirectoryW, FILE_ATTRIBUTE_DIRECTORY, GetFileAttributesW, INVALID_FILE_ATTRIBUTES,
+    };
+
+    const MAX_PATH_THRESHOLD: usize = 248;
+    const BACKSLASH_U16: u16 = b'\\' as u16;
+
+    fn has_extended_prefix(path: &Path) -> bool {
+        matches!(
+            path.components().next(),
+            Some(Component::Prefix(prefix))
+                if matches!(
+                    prefix.kind(),
+                    Prefix::Verbatim(_)
+                        | Prefix::VerbatimDisk(_)
+                        | Prefix::VerbatimUNC(_, _)
+                )
+        )
+    }
+
+    fn is_unc_path(path: &Path) -> bool {
+        matches!(
+            path.components().next(),
+            Some(Component::Prefix(prefix)) if matches!(prefix.kind(), Prefix::UNC(_, _))
+        )
+    }
+
+    fn needs_extended(path: &Path) -> bool {
+        !has_extended_prefix(path) && path.as_os_str().encode_wide().count() >= MAX_PATH_THRESHOLD
+    }
+
+    fn wide_with_optional_prefix(path: &Path, force_extended: bool) -> Vec<u16> {
+        const EXTENDED_PREFIX: &[u16] = &['\\' as u16, '\\' as u16, '?' as u16, '\\' as u16];
+        const UNC_EXTENDED_PREFIX: &[u16] = &[
+            '\\' as u16,
+            '\\' as u16,
+            '?' as u16,
+            '\\' as u16,
+            'U' as u16,
+            'N' as u16,
+            'C' as u16,
+            '\\' as u16,
+        ];
+
+        let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
+
+        if has_extended_prefix(path) || (!force_extended && wide.len() < MAX_PATH_THRESHOLD) {
+            wide.push(0);
+            return wide;
+        }
+
+        if is_unc_path(path) {
+            let mut prefixed = UNC_EXTENDED_PREFIX.to_vec();
+            let tail = if wide.len() >= 2 && wide[0] == BACKSLASH_U16 && wide[1] == BACKSLASH_U16 {
+                &wide[2..]
+            } else {
+                &wide[..]
+            };
+            prefixed.extend_from_slice(tail);
+            prefixed.push(0);
+            prefixed
+        } else {
+            let mut prefixed = EXTENDED_PREFIX.to_vec();
+            prefixed.extend_from_slice(&wide);
+            prefixed.push(0);
+            prefixed
+        }
+    }
+
+    if !needs_extended(path) && !has_extended_prefix(path) {
+        return fs::create_dir_all(path);
+    }
+
+    let abs_path = if path.is_absolute() || has_extended_prefix(path) {
+        path.to_path_buf()
+    } else {
+        env::current_dir()?.join(path)
+    };
+
+    let mut use_extended = needs_extended(&abs_path);
+    let mut accum = PathBuf::new();
+
+    for component in abs_path.components() {
+        match component {
+            Component::Prefix(prefix) => {
+                accum.push(prefix.as_os_str());
+            }
+            Component::RootDir => {
+                accum.push(component.as_os_str());
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                accum.pop();
+            }
+            Component::Normal(part) => {
+                accum.push(part);
+                if needs_extended(&accum) {
+                    use_extended = true;
+                }
+
+                let wide_path = wide_with_optional_prefix(&accum, use_extended);
+                let result = unsafe { CreateDirectoryW(wide_path.as_ptr(), std::ptr::null_mut()) };
+                if result == 0 {
+                    let err = unsafe { GetLastError() };
+                    if err == ERROR_ALREADY_EXISTS {
+                        let attrs = unsafe { GetFileAttributesW(wide_path.as_ptr()) };
+                        if attrs == INVALID_FILE_ATTRIBUTES || attrs & FILE_ATTRIBUTE_DIRECTORY == 0
+                        {
+                            return Err(io::Error::from_raw_os_error(err as i32));
+                        }
+                    } else {
+                        return Err(io::Error::from_raw_os_error(err as i32));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(not(any(unix, windows)))]
 fn create_dir_all_for_install(path: &Path) -> io::Result<()> {
     fs::create_dir_all(path)
 }
