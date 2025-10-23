@@ -12,10 +12,11 @@ use file_diff::diff;
 use filetime::{FileTime, set_file_times};
 #[cfg(feature = "selinux")]
 use selinux::SecurityContext;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::fmt::Debug;
 use std::fs::File;
 use std::fs::{self, metadata};
+use std::io;
 use std::path::{MAIN_SEPARATOR, Path, PathBuf};
 use std::process;
 use thiserror::Error;
@@ -37,14 +38,7 @@ use uucore::translate;
 use uucore::{format_usage, show, show_error, show_if_err};
 
 #[cfg(unix)]
-use std::os::{
-    fd::{AsFd, BorrowedFd},
-    unix::{
-        fs::{FileTypeExt, MetadataExt},
-        io::OwnedFd,
-        prelude::OsStrExt,
-    },
-};
+use std::os::unix::fs::{FileTypeExt, MetadataExt};
 #[cfg(unix)]
 use std::os::unix::prelude::OsStrExt;
 

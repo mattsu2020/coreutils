@@ -12,12 +12,15 @@ use std::path::Path;
 use std::os::unix::ffi::OsStringExt;
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::path::Path;
 #[cfg(not(windows))]
 use uucore::libc;
 #[cfg(not(windows))]
 use std::process::Command;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use std::thread::sleep;
+#[cfg(not(windows))]
+use uucore::libc;
 use uucore::process::{getegid, geteuid};
 #[cfg(feature = "feat_selinux")]
 use uucore::selinux::get_getfattr_output;

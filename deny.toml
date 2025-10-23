@@ -89,8 +89,10 @@ skip = [
   { name = "thiserror-impl", version = "1.0.69" },
   # bindgen
   { name = "itertools", version = "0.13.0" },
-  # ordered-multimap
+  # ordered-multimap / lru / indexmap
   { name = "hashbrown", version = "0.14.5" },
+  { name = "hashbrown", version = "0.15.5" },
+  { name = "hashbrown", version = "0.16.0" },
   # cexpr (via bindgen)
   { name = "nom", version = "7.1.3" },
   # const-random-macro, rand_core

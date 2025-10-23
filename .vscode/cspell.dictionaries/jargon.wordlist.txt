@@ -13,6 +13,7 @@ canonicalize
 canonicalizing
 CLOEXEC
 capget
+CLOEXEC
 codepoint
 codepoints
 codeready
@@ -45,6 +46,7 @@ exponentiate
 eval
 esac
 falsey
+FDCWD
 fileio
 filesystem
 filesystems
@@ -116,6 +118,7 @@ primality
 pseudoprime
 pseudoprimes
 quantiles
+RDONLY
 readonly
 reparse
 seedable
