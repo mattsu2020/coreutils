@@ -147,7 +147,8 @@ impl FileInformation {
                 not(target_pointer_width = "64")
             )
         ))]
-        return u64::try_from(self.0.st_nlink).unwrap();
+        #[allow(clippy::useless_conversion)]
+        return self.0.st_nlink.into();
         #[cfg(target_os = "aix")]
         return self.0.st_nlink.try_into().unwrap();
         #[cfg(windows)]
@@ -166,7 +167,8 @@ impl FileInformation {
             target_os = "netbsd",
             not(target_pointer_width = "64")
         ))]
-        return u64::try_from(self.0.st_ino).unwrap();
+        #[allow(clippy::useless_conversion)]
+        return self.0.st_ino.into();
     }
 }
 
