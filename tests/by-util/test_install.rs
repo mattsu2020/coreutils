@@ -7,9 +7,13 @@
 #[cfg(not(target_os = "openbsd"))]
 use filetime::FileTime;
 use std::fs;
+use std::path::Path;
 #[cfg(target_os = "linux")]
 use std::os::unix::ffi::OsStringExt;
+#[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
+#[cfg(not(windows))]
+use uucore::libc;
 #[cfg(not(windows))]
 use std::process::Command;
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -1014,6 +1018,29 @@ fn test_install_creating_leading_dir_fails_on_long_name() {
         .arg(at.plus(target.as_str()))
         .fails()
         .stderr_contains("failed to create");
+}
+
+#[test]
+#[cfg(unix)]
+fn test_install_directory_deep_path_succeeds() {
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+
+    let deep_rel_path = format!("./{}", "a/".repeat((libc::PATH_MAX as usize / 4) + 16));
+    let deep_abs_path = at.plus(deep_rel_path.as_str());
+
+    scene
+        .ucmd()
+        .arg("-d")
+        .arg(&deep_abs_path)
+        .succeeds()
+        .no_stderr();
+
+    assert!(
+        Path::new(&deep_abs_path).exists(),
+        "expected directory `{}` to exist",
+        deep_abs_path.display()
+    );
 }
 
 #[test]
