@@ -313,7 +313,6 @@ clap_mangen = "0.2"
 compare = "0.1.0"
 crossterm = "0.29.0"
 ctor = "0.6.0"
-ctrlc = { version = "3.4.7", features = ["termination"] }
 divan = { package = "codspeed-divan-compat", version = "*" }
 dns-lookup = { version = "3.0.0" }
 exacl = "0.12.0"
@@ -575,6 +574,12 @@ serde = { version = "1.0.202", features = ["derive"] }
 bincode = { version = "2.0.1", features = ["serde"] }
 serde-big-array = "0.5.1"
 
+
+[target.'cfg(not(target_os = "redox"))'.dependencies]
+ctrlc = { version = "3.4.7", features = ["termination"] }
+
+[target.'cfg(target_os = "redox")'.dependencies]
+ctrlc = { version = "3.4.7" }
 
 [build-dependencies]
 phf_codegen.workspace = true
