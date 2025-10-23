@@ -16,6 +16,20 @@ use std::collections::HashSet;
 use uutests::at_and_ucmd;
 use uutests::new_ucmd;
 
+fn skip_df_tests() -> bool {
+    let mut cmd = new_ucmd!();
+    let result = cmd.arg(".").run();
+    if result.succeeded() {
+        false
+    } else if result.stderr_str().contains("no file systems processed") {
+        eprintln!("Skipping df tests: {}", result.stderr_str());
+        true
+    } else {
+        result.success();
+        false
+    }
+}
+
 #[test]
 fn test_invalid_arg() {
     new_ucmd!().arg("--definitely-invalid").fails_with_code(1);
@@ -557,6 +571,9 @@ fn test_iuse_percentage() {
 
 #[test]
 fn test_default_block_size() {
+    if skip_df_tests() {
+        return;
+    }
     let output = new_ucmd!()
         .arg("--output=size")
         .succeeds()
@@ -602,6 +619,10 @@ fn test_default_block_size_in_posix_portability_mode() {
 
 #[test]
 fn test_block_size_1024() {
+    if skip_df_tests() {
+        return;
+    }
+
     fn get_header(block_size: u64) -> String {
         let output = new_ucmd!()
             .args(&["-B", &format!("{block_size}"), "--output=size", "."])
@@ -626,6 +647,10 @@ fn test_block_size_1024() {
 
 #[test]
 fn test_block_size_with_suffix() {
+    if skip_df_tests() {
+        return;
+    }
+
     fn get_header(block_size: &str) -> String {
         let output = new_ucmd!()
             .args(&["-B", block_size, "--output=size", "."])
@@ -650,6 +675,10 @@ fn test_block_size_with_suffix() {
 
 #[test]
 fn test_block_size_in_posix_portability_mode() {
+    if skip_df_tests() {
+        return;
+    }
+
     fn get_header(block_size: &str) -> String {
         let output = new_ucmd!()
             .args(&["-P", "-B", block_size])
@@ -676,6 +705,9 @@ fn test_block_size_in_posix_portability_mode() {
 
 #[test]
 fn test_block_size_from_env() {
+    if skip_df_tests() {
+        return;
+    }
     fn get_header(env_var: &str, env_value: &str) -> String {
         let output = new_ucmd!()
             .args(&["--output=size", "."])
@@ -692,6 +724,9 @@ fn test_block_size_from_env() {
 
 #[test]
 fn test_block_size_from_env_zero() {
+    if skip_df_tests() {
+        return;
+    }
     fn get_header(env_var: &str, env_value: &str) -> String {
         let output = new_ucmd!()
             .args(&["--output=size", "."])
@@ -710,6 +745,9 @@ fn test_block_size_from_env_zero() {
 
 #[test]
 fn test_block_size_from_env_precedences() {
+    if skip_df_tests() {
+        return;
+    }
     fn get_header(one: (&str, &str), two: (&str, &str)) -> String {
         let (k1, v1) = one;
         let (k2, v2) = two;
@@ -733,6 +771,9 @@ fn test_block_size_from_env_precedences() {
 
 #[test]
 fn test_precedence_of_block_size_arg_over_env() {
+    if skip_df_tests() {
+        return;
+    }
     let output = new_ucmd!()
         .args(&["-B", "999", "--output=size"])
         .env("DF_BLOCK_SIZE", "111")
@@ -745,6 +786,9 @@ fn test_precedence_of_block_size_arg_over_env() {
 
 #[test]
 fn test_invalid_block_size_from_env() {
+    if skip_df_tests() {
+        return;
+    }
     let default_block_size_header = "1K-blocks";
 
     let output = new_ucmd!()
@@ -779,6 +823,9 @@ fn test_invalid_block_size_from_env() {
 
 #[test]
 fn test_ignore_block_size_from_env_in_posix_portability_mode() {
+    if skip_df_tests() {
+        return;
+    }
     let default_block_size_header = "1024-blocks";
 
     let output = new_ucmd!()
