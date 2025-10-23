@@ -51,32 +51,41 @@ impl TmpDirWrapper {
                 })?,
         );
 
-        let path = self.temp_dir.as_ref().unwrap().path().to_owned();
-        let lock = self.lock.clone();
-        ctrlc::set_handler(move || {
-            // Take the lock so that `next_file_path` returns no new file path,
-            // and the program doesn't terminate before the handler has finished
-            let _lock = lock.lock().unwrap();
-            if let Err(e) = remove_tmp_dir(&path) {
-                show_error!(
-                    "{}",
+        #[cfg(any(
+            all(target_family = "unix", not(target_os = "redox")),
+            target_family = "windows",
+            target_os = "redox"
+        ))]
+        {
+            let path = self.temp_dir.as_ref().unwrap().path().to_owned();
+            let lock = self.lock.clone();
+            ctrlc::set_handler(move || {
+                // Take the lock so that `next_file_path` returns no new file path,
+                // and the program doesn't terminate before the handler has finished
+                let _lock = lock.lock().unwrap();
+                if let Err(e) = remove_tmp_dir(&path) {
+                    show_error!(
+                        "{}",
+                        translate!(
+                            "sort-failed-to-delete-temporary-directory",
+                            "error" => e
+                        )
+                    );
+                }
+                std::process::exit(2)
+            })
+            .map_err(|e| {
+                USimpleError::new(
+                    2,
                     translate!(
-                        "sort-failed-to-delete-temporary-directory",
+                        "sort-failed-to-set-up-signal-handler",
                         "error" => e
-                    )
-                );
-            }
-            std::process::exit(2)
-        })
-        .map_err(|e| {
-            USimpleError::new(
-                2,
-                translate!(
-                    "sort-failed-to-set-up-signal-handler",
-                    "error" => e
-                ),
-            )
-        })
+                    ),
+                )
+            })?;
+        }
+
+        Ok(())
     }
 
     pub fn next_file(&mut self) -> UResult<(File, PathBuf)> {

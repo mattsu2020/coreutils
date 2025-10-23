@@ -576,7 +576,10 @@ bincode = { version = "2.0.1", features = ["serde"] }
 serde-big-array = "0.5.1"
 
 
-[target.'cfg(not(target_os = "redox"))'.dependencies]
+[target.'cfg(all(target_family = "unix", not(target_os = "redox")))'.dependencies]
+ctrlc = { version = "3.4.7", features = ["termination"] }
+
+[target.'cfg(target_family = "windows")'.dependencies]
 ctrlc = { version = "3.4.7", features = ["termination"] }
 
 [target.'cfg(target_os = "redox")'.dependencies]
