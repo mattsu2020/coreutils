@@ -3894,12 +3894,11 @@ fn test_args_when_settings_check_warnings_then_shows_warnings() {
     let file_line = "file data";
     at.write("data", &format!("{file_line}{newline}"));
 
-    let expected_stdout = [
-        "tail: warning: --retry ignored; --retry is useful only when following",
-        file_line,
-        "",
-    ]
-    .join(newline);
+    let expected_stdout = format!(
+        "tail: warning: --retry ignored; --retry is useful only when following\n\
+        {file_line}\n"
+    )
+    .replace('\n', newline);
     scene
         .ucmd()
         .args(&["--retry", "data"])
@@ -3907,12 +3906,11 @@ fn test_args_when_settings_check_warnings_then_shows_warnings() {
         .succeeds()
         .stdout_only(&expected_stdout);
 
-    let expected_stdout = [
-        "tail: warning: --retry only effective for the initial open",
-        file_line,
-        "",
-    ]
-    .join(newline);
+    let expected_stdout = format!(
+        "tail: warning: --retry only effective for the initial open\n\
+        {file_line}\n"
+    )
+    .replace('\n', newline);
     let mut child = scene
         .ucmd()
         .args(&["--follow=descriptor", "--retry", "data"])
@@ -3926,12 +3924,11 @@ fn test_args_when_settings_check_warnings_then_shows_warnings() {
         .with_current_output()
         .stdout_only(&expected_stdout);
 
-    let expected_stdout = [
-        "tail: warning: PID ignored; --pid=PID is useful only when following",
-        file_line,
-        "",
-    ]
-    .join(newline);
+    let expected_stdout = format!(
+        "tail: warning: PID ignored; --pid=PID is useful only when following\n\
+        {file_line}\n"
+    )
+    .replace('\n', newline);
     scene
         .ucmd()
         .args(&["--pid=1000", "data"])
@@ -3939,13 +3936,12 @@ fn test_args_when_settings_check_warnings_then_shows_warnings() {
         .succeeds()
         .stdout_only(&expected_stdout);
 
-    let expected_stdout = [
-        "tail: warning: --retry ignored; --retry is useful only when following",
-        "tail: warning: PID ignored; --pid=PID is useful only when following",
-        file_line,
-        "",
-    ]
-    .join(newline);
+    let expected_stdout = format!(
+        "tail: warning: --retry ignored; --retry is useful only when following\n\
+        tail: warning: PID ignored; --pid=PID is useful only when following\n\
+        {file_line}\n"
+    )
+    .replace('\n', newline);
     scene
         .ucmd()
         .args(&["--pid=1000", "--retry", "data"])
