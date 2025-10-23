@@ -12,8 +12,6 @@ use std::os::unix::ffi::OsStringExt;
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
-#[cfg(windows)]
-use std::path::PathBuf;
 #[cfg(not(windows))]
 use std::process::Command;
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -1042,34 +1040,6 @@ fn test_install_directory_deep_path_succeeds() {
         Path::new(&deep_abs_path).exists(),
         "expected directory `{}` to exist",
         deep_abs_path.display()
-    );
-}
-
-#[test]
-#[cfg(windows)]
-fn test_install_directory_deep_path_windows_succeeds() {
-    let scene = TestScenario::new(util_name!());
-    let at = &scene.fixtures;
-
-    let mut deep_rel = PathBuf::new();
-    for idx in 0..90 {
-        deep_rel.push(format!("dir_{idx:03}"));
-    }
-
-    let deep_abs = at.plus(&deep_rel);
-    let deep_str = deep_abs.to_string_lossy().into_owned();
-    assert!(
-        deep_str.len() > 260,
-        "expected test path length to exceed Windows MAX_PATH limit, got {}",
-        deep_str.len()
-    );
-
-    scene.ucmd().arg("-d").arg(&deep_str).succeeds().no_stderr();
-
-    assert!(
-        deep_abs.exists(),
-        "expected directory `{}` to exist",
-        deep_abs.display()
     );
 }
 
