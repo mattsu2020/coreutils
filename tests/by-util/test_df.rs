@@ -604,7 +604,7 @@ fn test_default_block_size_in_posix_portability_mode() {
 fn test_block_size_1024() {
     fn get_header(block_size: u64) -> String {
         let output = new_ucmd!()
-            .args(&["-B", &format!("{block_size}"), "--output=size"])
+            .args(&["-B", &format!("{block_size}"), "--output=size", "."])
             .succeeds()
             .stdout_str_lossy();
         output.lines().next().unwrap().trim().to_string()
@@ -628,7 +628,7 @@ fn test_block_size_1024() {
 fn test_block_size_with_suffix() {
     fn get_header(block_size: &str) -> String {
         let output = new_ucmd!()
-            .args(&["-B", block_size, "--output=size"])
+            .args(&["-B", block_size, "--output=size", "."])
             .succeeds()
             .stdout_str_lossy();
         output.lines().next().unwrap().trim().to_string()
@@ -678,7 +678,7 @@ fn test_block_size_in_posix_portability_mode() {
 fn test_block_size_from_env() {
     fn get_header(env_var: &str, env_value: &str) -> String {
         let output = new_ucmd!()
-            .arg("--output=size")
+            .args(&["--output=size", "."])
             .env(env_var, env_value)
             .succeeds()
             .stdout_str_lossy();
@@ -694,7 +694,7 @@ fn test_block_size_from_env() {
 fn test_block_size_from_env_zero() {
     fn get_header(env_var: &str, env_value: &str) -> String {
         let output = new_ucmd!()
-            .arg("--output=size")
+            .args(&["--output=size", "."])
             .env(env_var, env_value)
             .succeeds()
             .stdout_str_lossy();
@@ -714,7 +714,7 @@ fn test_block_size_from_env_precedences() {
         let (k1, v1) = one;
         let (k2, v2) = two;
         let output = new_ucmd!()
-            .arg("--output=size")
+            .args(&["--output=size", "."])
             .env(k1, v1)
             .env(k2, v2)
             .succeeds()
