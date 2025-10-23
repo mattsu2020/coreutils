@@ -588,6 +588,7 @@ dependencies = [
  "clap_complete",
  "clap_mangen",
  "ctor",
+ "ctrlc",
  "filetime",
  "fluent-syntax",
  "glob",
