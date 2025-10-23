@@ -147,7 +147,7 @@ impl FileInformation {
                 not(target_pointer_width = "64")
             )
         ))]
-        return self.0.st_nlink as u64;
+        return u64::try_from(self.0.st_nlink).unwrap();
         #[cfg(target_os = "aix")]
         return self.0.st_nlink.try_into().unwrap();
         #[cfg(windows)]
@@ -166,7 +166,7 @@ impl FileInformation {
             target_os = "netbsd",
             not(target_pointer_width = "64")
         ))]
-        return self.0.st_ino as u64;
+        return u64::try_from(self.0.st_ino).unwrap();
     }
 }
 
