@@ -246,12 +246,12 @@ fn parse_options(args: &ArgMatches) -> Result<NumfmtOptions> {
         header,
         fields,
         delimiter,
+        unit_separator,
         round,
         suffix,
         format,
         invalid,
         zero_terminated,
-        unit_separator,
     })
 }
 

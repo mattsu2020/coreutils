@@ -76,8 +76,8 @@ fn consume_unit_separator<'a>(input: &'a str, unit_separator: Option<&str>) -> (
         if sep.is_empty() {
             return (input, true);
         }
-        if input.starts_with(sep) {
-            return (&input[sep.len()..], true);
+        if let Some(stripped) = input.strip_prefix(sep) {
+            return (stripped, true);
         }
     }
 
@@ -98,9 +98,8 @@ fn strip_unit_separator_from_end<'a>(
         if sep.is_empty() {
             return (input, true);
         }
-        if input.ends_with(sep) {
-            let new_len = input.len() - sep.len();
-            return (&input[..new_len], true);
+        if let Some(stripped) = input.strip_suffix(sep) {
+            return (stripped, true);
         }
     }
 
