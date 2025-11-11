@@ -138,6 +138,10 @@ fn parse_suffix(s: &str, unit_separator: Option<&str>) -> Result<(f64, Option<Su
         return Err(translate!("numfmt-error-invalid-number-empty"));
     }
 
+    if trimmed.eq_ignore_ascii_case("nan") {
+        return Err(translate!("numfmt-error-invalid-suffix", "input" => s.quote()));
+    }
+
     if trimmed
         .chars()
         .next()

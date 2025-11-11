@@ -10,8 +10,7 @@ use crate::units::{Result, Unit};
 use clap::{Arg, ArgAction, ArgMatches, Command, parser::ValueSource};
 use std::cell::Cell;
 use std::ffi::OsString;
-use std::io::{BufRead, Error, Write};
-use std::result::Result as StdResult;
+use std::io::{BufRead, Write};
 use std::str::FromStr;
 
 use units::{IEC_BASES, SI_BASES};
@@ -87,7 +86,7 @@ fn emit_debug_invalid_summary(options: &NumfmtOptions) {
 
 fn handle_args<'a>(args: impl Iterator<Item = &'a str>, options: &NumfmtOptions) -> UResult<()> {
     for l in args {
-        format_and_handle_validation(l, options)?;
+        format_and_handle_validation(l, Some('\n'), options)?;
     }
     Ok(())
 }
@@ -97,38 +96,96 @@ where
     R: BufRead,
 {
     if options.zero_terminated {
-        handle_buffer_iterator(
-            input
-                .split(0)
-                // FIXME: This panics on UTF8 decoding, but this util in general doesn't handle
-                // invalid UTF8
-                .map(|bytes| Ok(String::from_utf8(bytes?).unwrap())),
-            options,
-        )
+        handle_zero_terminated_buffer(input, options)
     } else {
-        handle_buffer_iterator(input.lines(), options)
+        handle_newline_buffer(input, options)
     }
 }
 
-fn handle_buffer_iterator(
-    iter: impl Iterator<Item = StdResult<String, Error>>,
-    options: &NumfmtOptions,
-) -> UResult<()> {
-    let eol = if options.zero_terminated { '\0' } else { '\n' };
-    for (idx, line_result) in iter.enumerate() {
-        match line_result {
-            Ok(line) if idx < options.header => {
-                print!("{line}{eol}");
-                Ok(())
+fn handle_newline_buffer<R>(mut input: R, options: &NumfmtOptions) -> UResult<()>
+where
+    R: BufRead,
+{
+    let mut buf = String::new();
+    let mut idx = 0;
+
+    loop {
+        buf.clear();
+        match input.read_line(&mut buf) {
+            Ok(0) => break,
+            Ok(_) => {
+                let terminator = if buf.ends_with('\n') {
+                    buf.pop();
+                    Some('\n')
+                } else {
+                    None
+                };
+                process_input_line(&buf, terminator, idx, options)?;
+                idx += 1;
             }
-            Ok(line) => format_and_handle_validation(line.as_ref(), options),
             Err(err) => return Err(Box::new(NumfmtError::IoError(err.to_string()))),
-        }?;
+        }
     }
+
     Ok(())
 }
 
-fn format_and_handle_validation(input_line: &str, options: &NumfmtOptions) -> UResult<()> {
+fn handle_zero_terminated_buffer<R>(mut input: R, options: &NumfmtOptions) -> UResult<()>
+where
+    R: BufRead,
+{
+    let mut buf = Vec::new();
+    let mut idx = 0;
+
+    loop {
+        buf.clear();
+        match input.read_until(0, &mut buf) {
+            Ok(0) => break,
+            Ok(_) => {
+                let terminator = if buf.last() == Some(&0) {
+                    buf.pop();
+                    Some('\0')
+                } else {
+                    None
+                };
+                let line =
+                    String::from_utf8(buf.clone()).expect("numfmt currently expects valid UTF-8");
+                process_input_line(&line, terminator, idx, options)?;
+                idx += 1;
+            }
+            Err(err) => return Err(Box::new(NumfmtError::IoError(err.to_string()))),
+        }
+    }
+
+    Ok(())
+}
+
+fn process_input_line(
+    line: &str,
+    terminator: Option<char>,
+    idx: usize,
+    options: &NumfmtOptions,
+) -> UResult<()> {
+    if idx < options.header {
+        print_with_terminator(line, terminator);
+        Ok(())
+    } else {
+        format_and_handle_validation(line, terminator, options)
+    }
+}
+
+fn print_with_terminator(line: &str, terminator: Option<char>) {
+    match terminator {
+        Some(term) => print!("{line}{term}"),
+        None => print!("{line}"),
+    }
+}
+
+fn format_and_handle_validation(
+    input_line: &str,
+    terminator: Option<char>,
+    options: &NumfmtOptions,
+) -> UResult<()> {
     let handled_line = format_and_print(input_line, options);
 
     if let Err(error_message) = handled_line {
@@ -148,7 +205,7 @@ fn format_and_handle_validation(input_line: &str, options: &NumfmtOptions) -> UR
                 options.debug_invalid_encountered.set(true);
             }
         }
-        println!("{input_line}");
+        print_with_terminator(input_line, terminator);
     }
 
     Ok(())
