@@ -31,7 +31,7 @@ pub enum Unit {
 
 pub type Result<T> = std::result::Result<T, String>;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RawSuffix {
     K,
     M,

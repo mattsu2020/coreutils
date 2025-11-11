@@ -50,11 +50,15 @@ impl<'a> Iterator for WhitespaceSplitter<'a> {
 
         let (prefix, field) = haystack.split_at(
             haystack
-                .find(|c: char| !c.is_whitespace())
+                .find(|c: char| !is_field_separator(c))
                 .unwrap_or(haystack.len()),
         );
 
-        let (field, rest) = field.split_at(field.find(char::is_whitespace).unwrap_or(field.len()));
+        let (field, rest) = field.split_at(
+            field
+                .find(|c: char| is_field_separator(c))
+                .unwrap_or(field.len()),
+        );
 
         self.s = if rest.is_empty() { None } else { Some(rest) };
 
@@ -62,8 +66,20 @@ impl<'a> Iterator for WhitespaceSplitter<'a> {
     }
 }
 
+fn is_non_breaking_space(c: char) -> bool {
+    matches!(c, '\u{00A0}' | '\u{2007}' | '\u{202F}' | '\u{2060}')
+}
+
+fn is_field_separator(c: char) -> bool {
+    c.is_whitespace() && !is_non_breaking_space(c)
+}
+
 fn is_blank_or_nbsp(c: char) -> bool {
-    matches!(c, ' ' | '\t' | '\u{00A0}')
+    if matches!(c, '\n' | '\r') {
+        return false;
+    }
+
+    c.is_whitespace() || is_non_breaking_space(c)
 }
 
 fn is_newline_or_blank(c: char) -> bool {
@@ -128,7 +144,7 @@ fn parse_suffix(s: &str, unit_separator: Option<&str>) -> Result<(f64, Option<Su
         .map(|c| c.is_ascii_alphabetic())
         .unwrap_or(false)
     {
-        return Err(translate!("numfmt-error-invalid-suffix", "input" => s.quote()));
+        return Err(translate!("numfmt-error-invalid-number", "input" => s.quote()));
     }
 
     match numeric_prefix_len(trimmed) {
@@ -682,5 +698,23 @@ mod tests {
         assert_eq!(1, parse_implicit_precision("1.2K"));
         assert_eq!(2, parse_implicit_precision("1.23K"));
         assert_eq!(3, parse_implicit_precision("1.234K"));
+    }
+
+    #[test]
+    fn parse_suffix_accepts_additional_nbsp_variants() {
+        for ch in ['\u{00A0}', '\u{2007}', '\u{202F}', '\u{2003}'] {
+            let input = format!("2{ch}K");
+            let (value, suffix) = parse_suffix(&input, None).unwrap();
+            assert_eq!(value, 2.0);
+            assert_eq!(suffix, Some((RawSuffix::K, false)));
+        }
+    }
+
+    #[test]
+    fn parse_suffix_accepts_word_joiner() {
+        let input = "2\u{2060}Ki";
+        let (value, suffix) = parse_suffix(input, None).unwrap();
+        assert_eq!(value, 2.0);
+        assert_eq!(suffix, Some((RawSuffix::K, true)));
     }
 }
