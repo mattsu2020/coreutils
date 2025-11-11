@@ -3,7 +3,6 @@
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 // spell-checker:ignore powf undelimited
-use lexical_core::parse_partial;
 use uucore::display::Quotable;
 use uucore::translate;
 
@@ -132,12 +131,70 @@ fn parse_suffix(s: &str, unit_separator: Option<&str>) -> Result<(f64, Option<Su
         return Err(translate!("numfmt-error-invalid-suffix", "input" => s.quote()));
     }
 
-    match parse_partial::<f64>(trimmed.as_bytes()) {
-        Ok((number, consumed)) if consumed > 0 => {
+    match numeric_prefix_len(trimmed) {
+        Some(consumed) => {
+            let number_part = &trimmed[..consumed];
+            let number = number_part
+                .parse::<f64>()
+                .map_err(|_| translate!("numfmt-error-invalid-number", "input" => s.quote()))?;
             handle_suffix_after_number(s, trimmed, number, consumed, unit_separator)
         }
-        _ => parse_suffix_with_explicit_suffix(trimmed, unit_separator, s),
+        None => parse_suffix_with_explicit_suffix(trimmed, unit_separator, s),
     }
+}
+
+fn numeric_prefix_len(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let len = bytes.len();
+    let mut idx = 0;
+
+    if idx < len && matches!(bytes[idx], b'+' | b'-') {
+        idx += 1;
+    }
+
+    let mut has_digits = false;
+    while idx < len && bytes[idx].is_ascii_digit() {
+        idx += 1;
+        has_digits = true;
+    }
+
+    if idx < len && bytes[idx] == b'.' {
+        idx += 1;
+        let start_frac = idx;
+        while idx < len && bytes[idx].is_ascii_digit() {
+            idx += 1;
+            has_digits = true;
+        }
+        if !has_digits && idx == start_frac {
+            // there was no digit before or after the decimal point
+            return None;
+        }
+    }
+
+    if !has_digits {
+        return None;
+    }
+
+    let mut consumed = idx;
+    if idx < len && matches!(bytes[idx], b'e' | b'E') {
+        let exp_start = idx;
+        idx += 1;
+        if idx < len && matches!(bytes[idx], b'+' | b'-') {
+            idx += 1;
+        }
+        let digits_start = idx;
+        while idx < len && bytes[idx].is_ascii_digit() {
+            idx += 1;
+        }
+        if digits_start == idx {
+            // no exponent digits -> treat the 'e/E' as suffix instead
+            consumed = exp_start;
+        } else {
+            consumed = idx;
+        }
+    }
+
+    Some(consumed)
 }
 
 fn handle_suffix_after_number(
