@@ -2,6 +2,7 @@
 //
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
+use std::cell::Cell;
 use std::str::FromStr;
 
 use crate::units::Unit;
@@ -16,6 +17,7 @@ pub const FROM: &str = "from";
 pub const FROM_DEFAULT: &str = "none";
 pub const FROM_UNIT: &str = "from-unit";
 pub const FROM_UNIT_DEFAULT: &str = "1";
+pub const GROUPING: &str = "grouping";
 pub const HEADER: &str = "header";
 pub const HEADER_DEFAULT: &str = "1";
 pub const INVALID: &str = "invalid";
@@ -27,6 +29,8 @@ pub const TO: &str = "to";
 pub const TO_DEFAULT: &str = "none";
 pub const TO_UNIT: &str = "to-unit";
 pub const TO_UNIT_DEFAULT: &str = "1";
+pub const DEBUG: &str = "debug";
+pub const DEV_DEBUG: &str = "dev-debug";
 pub const UNIT_SEPARATOR: &str = "unit-separator";
 pub const ZERO_TERMINATED: &str = "zero-terminated";
 
@@ -57,6 +61,11 @@ pub struct NumfmtOptions {
     pub format: FormatOptions,
     pub invalid: InvalidModes,
     pub zero_terminated: bool,
+    pub grouping: bool,
+    pub debug: bool,
+    pub dev_debug: bool,
+    pub format_specified: bool,
+    pub debug_invalid_encountered: Cell<bool>,
 }
 
 #[derive(Clone, Copy)]

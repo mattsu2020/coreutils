@@ -8,6 +8,8 @@ use crate::format::format_and_print;
 use crate::options::*;
 use crate::units::{Result, Unit};
 use clap::{Arg, ArgAction, ArgMatches, Command, parser::ValueSource};
+use std::cell::Cell;
+use std::ffi::OsString;
 use std::io::{BufRead, Error, Write};
 use std::result::Result as StdResult;
 use std::str::FromStr;
@@ -25,6 +27,63 @@ pub mod errors;
 pub mod format;
 pub mod options;
 mod units;
+
+fn normalize_arguments(args: impl uucore::Args) -> Vec<OsString> {
+    args.map(|arg| {
+        if arg == "---debug" || arg == "-debug" {
+            OsString::from("--dev-debug")
+        } else {
+            arg
+        }
+    })
+    .collect()
+}
+
+fn locale_supports_grouping() -> bool {
+    let locale = std::env::var("LC_ALL")
+        .or_else(|_| std::env::var("LC_NUMERIC"))
+        .or_else(|_| std::env::var("LANG"))
+        .unwrap_or_default();
+    let normalized = locale.trim().to_ascii_uppercase();
+    !(normalized.is_empty() || normalized == "C" || normalized == "POSIX")
+}
+
+fn grouping_requested(options: &NumfmtOptions) -> bool {
+    options.grouping || options.format.grouping
+}
+
+fn emit_debug_preamble(options: &NumfmtOptions, numbers_from_cli: bool) {
+    if !options.debug {
+        return;
+    }
+
+    if options.transform.from == Unit::None
+        && options.transform.to == Unit::None
+        && !options.grouping
+        && !options.format_specified
+        && options.padding == 0
+    {
+        show_error!("{}", translate!("numfmt-debug-no-conversion"));
+    }
+
+    if grouping_requested(options) && !locale_supports_grouping() {
+        show_error!("{}", translate!("numfmt-debug-grouping-no-effect"));
+    }
+
+    if options.unit_separator.is_some() && options.delimiter.is_none() {
+        show_error!("{}", translate!("numfmt-debug-field-delimiter-precedence"));
+    }
+
+    if options.header > 0 && numbers_from_cli {
+        show_error!("{}", translate!("numfmt-debug-header-cli"));
+    }
+}
+
+fn emit_debug_invalid_summary(options: &NumfmtOptions) {
+    if options.debug && options.debug_invalid_encountered.get() {
+        show_error!("{}", translate!("numfmt-debug-invalid-inputs"));
+    }
+}
 
 fn handle_args<'a>(args: impl Iterator<Item = &'a str>, options: &NumfmtOptions) -> UResult<()> {
     for l in args {
@@ -78,12 +137,16 @@ fn format_and_handle_validation(input_line: &str, options: &NumfmtOptions) -> UR
                 return Err(Box::new(NumfmtError::FormattingError(error_message)));
             }
             InvalidModes::Fail => {
+                options.debug_invalid_encountered.set(true);
                 show!(NumfmtError::FormattingError(error_message));
             }
             InvalidModes::Warn => {
+                options.debug_invalid_encountered.set(true);
                 show_error!("{error_message}");
             }
-            InvalidModes::Ignore => {}
+            InvalidModes::Ignore => {
+                options.debug_invalid_encountered.set(true);
+            }
         }
         println!("{input_line}");
     }
@@ -155,6 +218,10 @@ fn parse_options(args: &ArgMatches) -> Result<NumfmtOptions> {
     let to = parse_unit(args.get_one::<String>(TO).unwrap())?;
     let from_unit = parse_unit_size(args.get_one::<String>(FROM_UNIT).unwrap())?;
     let to_unit = parse_unit_size(args.get_one::<String>(TO_UNIT).unwrap())?;
+    let grouping_flag = args.get_flag(GROUPING);
+    let dev_debug_flag = args.get_flag(DEV_DEBUG);
+    let debug_flag = args.get_flag(DEBUG) || dev_debug_flag;
+    let format_specified = args.value_source(FORMAT) == Some(ValueSource::CommandLine);
 
     let transform = TransformOptions {
         from,
@@ -206,7 +273,13 @@ fn parse_options(args: &ArgMatches) -> Result<NumfmtOptions> {
         None => FormatOptions::default(),
     };
 
-    if format.grouping && to != Unit::None {
+    if grouping_flag && format_specified {
+        return Err(translate!(
+            "numfmt-error-grouping-cannot-be-combined-with-format"
+        ));
+    }
+
+    if (grouping_flag || format.grouping) && to != Unit::None {
         return Err(translate!(
             "numfmt-error-grouping-cannot-be-combined-with-to"
         ));
@@ -240,6 +313,14 @@ fn parse_options(args: &ArgMatches) -> Result<NumfmtOptions> {
 
     let zero_terminated = args.get_flag(ZERO_TERMINATED);
 
+    if debug_flag && padding != 0 {
+        if let Some(pad) = format.padding {
+            if !(format.zero_padding && pad > 0) {
+                show_error!("{}", translate!("numfmt-debug-format-overrides-padding"));
+            }
+        }
+    }
+
     Ok(NumfmtOptions {
         transform,
         padding,
@@ -252,14 +333,22 @@ fn parse_options(args: &ArgMatches) -> Result<NumfmtOptions> {
         format,
         invalid,
         zero_terminated,
+        grouping: grouping_flag,
+        debug: debug_flag,
+        dev_debug: dev_debug_flag,
+        format_specified,
+        debug_invalid_encountered: Cell::new(false),
     })
 }
 
 #[uucore::main]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
-    let matches = uucore::clap_localization::handle_clap_result(uu_app(), args)?;
+    let normalized_args = normalize_arguments(args);
+    let matches =
+        uucore::clap_localization::handle_clap_result(uu_app(), normalized_args.into_iter())?;
 
     let options = parse_options(&matches).map_err(NumfmtError::IllegalArgument)?;
+    emit_debug_preamble(&options, matches.get_many::<String>(NUMBER).is_some());
 
     let result = match matches.get_many::<String>(NUMBER) {
         Some(values) => handle_args(values.map(|s| s.as_str()), &options),
@@ -269,6 +358,8 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             handle_buffer(&mut locked_stdin, &options)
         }
     };
+
+    emit_debug_invalid_summary(&options);
 
     match result {
         Err(e) => {
@@ -374,12 +465,30 @@ pub fn uu_app() -> Command {
                 .value_name("SUFFIX"),
         )
         .arg(
+            Arg::new(GROUPING)
+                .long(GROUPING)
+                .help(translate!("numfmt-help-grouping"))
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
             Arg::new(INVALID)
                 .long(INVALID)
                 .help(translate!("numfmt-help-invalid"))
                 .default_value("abort")
                 .value_parser(["abort", "fail", "warn", "ignore"])
                 .value_name("INVALID"),
+        )
+        .arg(
+            Arg::new(DEBUG)
+                .long(DEBUG)
+                .help(translate!("numfmt-help-debug"))
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new(DEV_DEBUG)
+                .long("dev-debug")
+                .hide(true)
+                .action(ArgAction::SetTrue),
         )
         .arg(
             Arg::new(ZERO_TERMINATED)
@@ -400,6 +509,7 @@ pub fn uu_app() -> Command {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use uucore::error::get_exit_code;
 
     use super::{
@@ -433,6 +543,11 @@ mod tests {
             format: FormatOptions::default(),
             invalid: InvalidModes::Abort,
             zero_terminated: false,
+            grouping: false,
+            debug: false,
+            dev_debug: false,
+            format_specified: false,
+            debug_invalid_encountered: Cell::new(false),
         }
     }
 

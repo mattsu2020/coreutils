@@ -1113,6 +1113,22 @@ fn test_format_grouping_conflicts_with_to_option() {
 }
 
 #[test]
+fn test_grouping_option_conflicts_with_to_option() {
+    new_ucmd!()
+        .args(&["--grouping", "--to=si", "1000"])
+        .fails_with_code(1)
+        .stderr_contains("grouping cannot be combined with --to");
+}
+
+#[test]
+fn test_grouping_conflicts_with_format_option() {
+    new_ucmd!()
+        .args(&["--grouping", "--format=%f", "1000"])
+        .fails_with_code(1)
+        .stderr_is("numfmt: --grouping cannot be combined with --format\n");
+}
+
+#[test]
 fn test_zero_terminated_command_line_args() {
     new_ucmd!()
         .args(&["--zero-terminated", "--to=si", "1000"])
@@ -1128,6 +1144,51 @@ fn test_zero_terminated_command_line_args() {
         .args(&["-z", "--to=si", "1000", "2000"])
         .succeeds()
         .stdout_is("1.0k\x002.0k\x00");
+}
+
+#[test]
+fn test_debug_warns_when_no_conversion_option() {
+    new_ucmd!()
+        .args(&["--debug", "4096"])
+        .succeeds()
+        .stdout_is("4096\n")
+        .stderr_is("numfmt: no conversion option specified\n");
+}
+
+#[test]
+fn test_debug_warns_when_header_is_ignored() {
+    new_ucmd!()
+        .args(&["--debug", "--header", "--to=iec", "4096"])
+        .succeeds()
+        .stdout_is("4.0K\n")
+        .stderr_is("numfmt: --header ignored with command-line input\n");
+}
+
+#[test]
+fn test_debug_summarizes_invalid_inputs() {
+    new_ucmd!()
+        .args(&[
+            "--debug",
+            "--invalid=fail",
+            "--to=si",
+            "1000",
+            "Foo",
+            "3000",
+        ])
+        .fails_with_code(2)
+        .stdout_is("1.0k\nFoo\n3.0k\n")
+        .stderr_is(
+            "numfmt: invalid number: 'Foo'\nnumfmt: failed to convert some of the input numbers\n",
+        );
+}
+
+#[test]
+fn test_dev_debug_three_dash_alias() {
+    new_ucmd!()
+        .args(&["---debug", "--from=si", "4.9K"])
+        .succeeds()
+        .stdout_is("4900\n")
+        .stderr_is("");
 }
 
 #[test]
