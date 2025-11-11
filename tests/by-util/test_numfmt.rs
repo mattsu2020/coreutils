@@ -37,12 +37,36 @@ fn test_from_si() {
 }
 
 #[test]
+fn test_from_si_accepts_lowercase_k_suffix() {
+    new_ucmd!()
+        .args(&["--from=si", "1k"])
+        .succeeds()
+        .stdout_is("1000\n");
+}
+
+#[test]
+fn test_from_si_supports_ronna_and_quetta() {
+    new_ucmd!()
+        .args(&["--from=si", "--to=si", "1R", "1Q"])
+        .succeeds()
+        .stdout_is("1.0R\n1.0Q\n");
+}
+
+#[test]
 fn test_from_iec() {
     new_ucmd!()
         .args(&["--from=iec"])
         .pipe_in("1024\n1.1M\n0.1G")
         .succeeds()
         .stdout_is("1024\n1153434\n107374183\n");
+}
+
+#[test]
+fn test_from_iec_supports_ronna_and_quetta() {
+    new_ucmd!()
+        .args(&["--from=iec", "1R", "1Q"])
+        .succeeds()
+        .stdout_is("1237940039285380274899124224\n1267650600228229401496703205376\n");
 }
 
 #[test]
@@ -89,12 +113,38 @@ fn test_to_si() {
 }
 
 #[test]
+fn test_to_si_supports_ronna_and_quetta() {
+    new_ucmd!()
+        .args(&["--to=si", "999600000000000000000000000"])
+        .succeeds()
+        .stdout_is("1.0R\n");
+
+    new_ucmd!()
+        .args(&["--to=si", "999600000000000000000000000000"])
+        .succeeds()
+        .stdout_is("1.0Q\n");
+}
+
+#[test]
 fn test_to_iec() {
     new_ucmd!()
         .args(&["--to=iec"])
         .pipe_in("1024\n1153434\n107374182")
         .succeeds()
         .stdout_is("1.0K\n1.2M\n103M\n");
+}
+
+#[test]
+fn test_to_iec_supports_ronna_and_quetta() {
+    new_ucmd!()
+        .args(&["--to=iec", "1237940039285380274899124224"])
+        .succeeds()
+        .stdout_is("1.0R\n");
+
+    new_ucmd!()
+        .args(&["--to=iec", "1267650600228229401496703205376"])
+        .succeeds()
+        .stdout_is("1.0Q\n");
 }
 
 #[test]
@@ -241,8 +291,7 @@ fn test_should_report_invalid_empty_number_on_blank_stdin() {
 
 #[test]
 fn test_suffixes() {
-    // TODO add support for ronna (R) and quetta (Q)
-    let valid_suffixes = ['K', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y' /*'R' , 'Q'*/];
+    let valid_suffixes = ['K', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y', 'R', 'Q', 'k'];
 
     for c in ('A'..='Z').chain('a'..='z') {
         let args = ["--from=si", "--to=si", &format!("1{c}")];
@@ -740,7 +789,7 @@ fn test_invalid_stdin_number_with_warn_returns_status_0() {
         .pipe_in("4Q")
         .succeeds()
         .stdout_is("4Q\n")
-        .stderr_is("numfmt: invalid suffix in input: '4Q'\n");
+        .stderr_is("numfmt: rejecting suffix in input: '4Q' (consider using --from)\n");
 }
 
 #[test]
@@ -758,7 +807,7 @@ fn test_invalid_stdin_number_with_abort_returns_status_2() {
         .args(&["--invalid=abort"])
         .pipe_in("4Q")
         .fails_with_code(2)
-        .stderr_only("numfmt: invalid suffix in input: '4Q'\n");
+        .stderr_only("numfmt: rejecting suffix in input: '4Q' (consider using --from)\n");
 }
 
 #[test]
@@ -768,7 +817,7 @@ fn test_invalid_stdin_number_with_fail_returns_status_2() {
         .pipe_in("4Q")
         .fails_with_code(2)
         .stdout_is("4Q\n")
-        .stderr_is("numfmt: invalid suffix in input: '4Q'\n");
+        .stderr_is("numfmt: rejecting suffix in input: '4Q' (consider using --from)\n");
 }
 
 #[test]
@@ -777,7 +826,7 @@ fn test_invalid_arg_number_with_warn_returns_status_0() {
         .args(&["--invalid=warn", "4Q"])
         .succeeds()
         .stdout_is("4Q\n")
-        .stderr_is("numfmt: invalid suffix in input: '4Q'\n");
+        .stderr_is("numfmt: rejecting suffix in input: '4Q' (consider using --from)\n");
 }
 
 #[test]
@@ -793,7 +842,7 @@ fn test_invalid_arg_number_with_abort_returns_status_2() {
     new_ucmd!()
         .args(&["--invalid=abort", "4Q"])
         .fails_with_code(2)
-        .stderr_only("numfmt: invalid suffix in input: '4Q'\n");
+        .stderr_only("numfmt: rejecting suffix in input: '4Q' (consider using --from)\n");
 }
 
 #[test]
@@ -802,7 +851,7 @@ fn test_invalid_arg_number_with_fail_returns_status_2() {
         .args(&["--invalid=fail", "4Q"])
         .fails_with_code(2)
         .stdout_is("4Q\n")
-        .stderr_is("numfmt: invalid suffix in input: '4Q'\n");
+        .stderr_is("numfmt: rejecting suffix in input: '4Q' (consider using --from)\n");
 }
 
 #[test]

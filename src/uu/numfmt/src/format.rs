@@ -242,17 +242,7 @@ fn handle_suffix_after_number(
         return Ok((number, None));
     };
 
-    let raw_suffix = match first {
-        'K' => Some(RawSuffix::K),
-        'M' => Some(RawSuffix::M),
-        'G' => Some(RawSuffix::G),
-        'T' => Some(RawSuffix::T),
-        'P' => Some(RawSuffix::P),
-        'E' => Some(RawSuffix::E),
-        'Z' => Some(RawSuffix::Z),
-        'Y' => Some(RawSuffix::Y),
-        _ => None,
-    };
+    let raw_suffix = RawSuffix::from_char(first);
 
     if raw_suffix.is_none() {
         let trimmed_rest = rest.trim_start_matches(is_newline_or_blank);
@@ -261,6 +251,8 @@ fn handle_suffix_after_number(
         }
         return Err(translate!("numfmt-error-invalid-suffix", "input" => original.quote()));
     }
+
+    let raw_suffix = raw_suffix.unwrap();
 
     let mut consumed_len = first.len_utf8();
     let mut with_i = false;
@@ -280,7 +272,7 @@ fn handle_suffix_after_number(
         ));
     }
 
-    Ok((number, Some((raw_suffix.unwrap(), with_i))))
+    Ok((number, Some((raw_suffix, with_i))))
 }
 
 fn parse_suffix_with_explicit_suffix(
@@ -302,20 +294,7 @@ fn parse_suffix_with_explicit_suffix(
     let Some(last_char) = body.chars().next_back() else {
         return Err(translate!("numfmt-error-invalid-number", "input" => original.quote()));
     };
-
-    let raw_suffix = match last_char {
-        'K' => Some(RawSuffix::K),
-        'M' => Some(RawSuffix::M),
-        'G' => Some(RawSuffix::G),
-        'T' => Some(RawSuffix::T),
-        'P' => Some(RawSuffix::P),
-        'E' => Some(RawSuffix::E),
-        'Z' => Some(RawSuffix::Z),
-        'Y' => Some(RawSuffix::Y),
-        _ => None,
-    };
-
-    let Some(raw_suffix) = raw_suffix else {
+    let Some(raw_suffix) = RawSuffix::from_char(last_char) else {
         return Err(translate!("numfmt-error-invalid-suffix", "input" => original.quote()));
     };
 
@@ -356,6 +335,8 @@ fn remove_suffix(i: f64, s: Option<Suffix>, u: &Unit) -> Result<f64> {
             RawSuffix::E => Ok(i * 1e18),
             RawSuffix::Z => Ok(i * 1e21),
             RawSuffix::Y => Ok(i * 1e24),
+            RawSuffix::R => Ok(i * SI_BASES[9]),
+            RawSuffix::Q => Ok(i * SI_BASES[10]),
         },
         (Some((raw_suffix, false)), &Unit::Iec(false))
         | (Some((raw_suffix, true)), &Unit::Auto | &Unit::Iec(true)) => match raw_suffix {
@@ -367,6 +348,8 @@ fn remove_suffix(i: f64, s: Option<Suffix>, u: &Unit) -> Result<f64> {
             RawSuffix::E => Ok(i * IEC_BASES[6]),
             RawSuffix::Z => Ok(i * IEC_BASES[7]),
             RawSuffix::Y => Ok(i * IEC_BASES[8]),
+            RawSuffix::R => Ok(i * IEC_BASES[9]),
+            RawSuffix::Q => Ok(i * IEC_BASES[10]),
         },
         (Some((raw_suffix, false)), &Unit::Iec(true)) => Err(
             translate!("numfmt-error-missing-i-suffix", "number" => i, "suffix" => format!("{raw_suffix:?}")),
@@ -445,10 +428,8 @@ fn consider_suffix(
     round_method: RoundMethod,
     precision: usize,
 ) -> Result<(f64, Option<Suffix>)> {
-    use crate::units::RawSuffix::{E, G, K, M, P, T, Y, Z};
-
     let abs_n = n.abs();
-    let suffixes = [K, M, G, T, P, E, Z, Y];
+    let suffixes = RawSuffix::ORDERED;
 
     let (bases, with_i) = match *u {
         Unit::Si => (&SI_BASES, false),
@@ -457,18 +438,19 @@ fn consider_suffix(
         Unit::None => return Ok((n, None)),
     };
 
-    let i = match abs_n {
-        _ if abs_n <= bases[1] - 1.0 => return Ok((n, None)),
-        _ if abs_n < bases[2] => 1,
-        _ if abs_n < bases[3] => 2,
-        _ if abs_n < bases[4] => 3,
-        _ if abs_n < bases[5] => 4,
-        _ if abs_n < bases[6] => 5,
-        _ if abs_n < bases[7] => 6,
-        _ if abs_n < bases[8] => 7,
-        _ if abs_n < bases[9] => 8,
-        _ => return Err(translate!("numfmt-error-number-too-big")),
-    };
+    if abs_n <= bases[1] - 1.0 {
+        return Ok((n, None));
+    }
+
+    let suffix_count = suffixes.len();
+    if abs_n >= bases[suffix_count + 1] {
+        return Err(translate!("numfmt-error-number-too-big"));
+    }
+
+    let mut i = 1;
+    while i < suffix_count && abs_n >= bases[i + 1] {
+        i += 1;
+    }
 
     let v = if precision > 0 {
         round_with_precision(n / bases[i], round_method, precision)
@@ -478,7 +460,11 @@ fn consider_suffix(
 
     // check if rounding pushed us into the next base
     if v.abs() >= bases[1] {
-        Ok((v / bases[1], Some((suffixes[i], with_i))))
+        if i == suffix_count {
+            Err(translate!("numfmt-error-number-too-big"))
+        } else {
+            Ok((v / bases[1], Some((suffixes[i], with_i))))
+        }
     } else {
         Ok((v, Some((suffixes[i - 1], with_i))))
     }
