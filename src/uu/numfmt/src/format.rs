@@ -3,6 +3,7 @@
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 // spell-checker:ignore powf
+use lexical_core::parse_partial;
 use uucore::display::Quotable;
 use uucore::translate;
 
@@ -62,42 +63,198 @@ impl<'a> Iterator for WhitespaceSplitter<'a> {
     }
 }
 
-fn parse_suffix(s: &str) -> Result<(f64, Option<Suffix>)> {
+fn is_blank_or_nbsp(c: char) -> bool {
+    matches!(c, ' ' | '\t' | '\u{00A0}')
+}
+
+fn is_newline_or_blank(c: char) -> bool {
+    matches!(c, '\n' | '\r') || is_blank_or_nbsp(c)
+}
+
+fn consume_unit_separator<'a>(input: &'a str, unit_separator: Option<&str>) -> (&'a str, bool) {
+    if let Some(sep) = unit_separator {
+        if sep.is_empty() {
+            return (input, true);
+        }
+        if input.starts_with(sep) {
+            return (&input[sep.len()..], true);
+        }
+    }
+
+    if let Some(ch) = input.chars().next() {
+        if is_blank_or_nbsp(ch) {
+            return (&input[ch.len_utf8()..], true);
+        }
+    }
+
+    (input, false)
+}
+
+fn strip_unit_separator_from_end<'a>(
+    input: &'a str,
+    unit_separator: Option<&str>,
+) -> (&'a str, bool) {
+    if let Some(sep) = unit_separator {
+        if sep.is_empty() {
+            return (input, true);
+        }
+        if input.ends_with(sep) {
+            let new_len = input.len() - sep.len();
+            return (&input[..new_len], true);
+        }
+    }
+
+    if let Some(ch) = input.chars().next_back() {
+        if is_blank_or_nbsp(ch) {
+            let new_len = input.len() - ch.len_utf8();
+            return (&input[..new_len], true);
+        }
+    }
+
+    (input, false)
+}
+
+fn parse_suffix(s: &str, unit_separator: Option<&str>) -> Result<(f64, Option<Suffix>)> {
     if s.is_empty() {
         return Err(translate!("numfmt-error-invalid-number-empty"));
     }
 
-    let with_i = s.ends_with('i');
-    let mut iter = s.chars();
-    if with_i {
-        iter.next_back();
+    let trimmed = s.trim_end_matches(is_newline_or_blank);
+    if trimmed.is_empty() {
+        return Err(translate!("numfmt-error-invalid-number-empty"));
     }
-    let suffix = match iter.next_back() {
-        Some('K') => Some((RawSuffix::K, with_i)),
-        Some('M') => Some((RawSuffix::M, with_i)),
-        Some('G') => Some((RawSuffix::G, with_i)),
-        Some('T') => Some((RawSuffix::T, with_i)),
-        Some('P') => Some((RawSuffix::P, with_i)),
-        Some('E') => Some((RawSuffix::E, with_i)),
-        Some('Z') => Some((RawSuffix::Z, with_i)),
-        Some('Y') => Some((RawSuffix::Y, with_i)),
-        Some('0'..='9') if !with_i => None,
-        _ => {
-            return Err(translate!("numfmt-error-invalid-suffix", "input" => s.quote()));
+
+    if trimmed
+        .chars()
+        .next()
+        .map(|c| c.is_ascii_alphabetic())
+        .unwrap_or(false)
+    {
+        return Err(translate!("numfmt-error-invalid-suffix", "input" => s.quote()));
+    }
+
+    match parse_partial::<f64>(trimmed.as_bytes()) {
+        Ok((number, consumed)) if consumed > 0 => {
+            handle_suffix_after_number(s, trimmed, number, consumed, unit_separator)
         }
+        _ => parse_suffix_with_explicit_suffix(trimmed, unit_separator, s),
+    }
+}
+
+fn handle_suffix_after_number(
+    original: &str,
+    trimmed: &str,
+    number: f64,
+    consumed: usize,
+    unit_separator: Option<&str>,
+) -> Result<(f64, Option<Suffix>)> {
+    let mut rest = &trimmed[consumed..];
+
+    if rest.is_empty() {
+        return Ok((number, None));
+    }
+
+    let (after_sep, _) = consume_unit_separator(rest, unit_separator);
+    rest = after_sep;
+
+    if rest.is_empty() {
+        return Ok((number, None));
+    }
+
+    let mut chars = rest.chars();
+    let Some(first) = chars.next() else {
+        return Ok((number, None));
     };
 
-    let suffix_len = match suffix {
-        None => 0,
-        Some((_, false)) => 1,
-        Some((_, true)) => 2,
+    let raw_suffix = match first {
+        'K' => Some(RawSuffix::K),
+        'M' => Some(RawSuffix::M),
+        'G' => Some(RawSuffix::G),
+        'T' => Some(RawSuffix::T),
+        'P' => Some(RawSuffix::P),
+        'E' => Some(RawSuffix::E),
+        'Z' => Some(RawSuffix::Z),
+        'Y' => Some(RawSuffix::Y),
+        _ => None,
     };
 
-    let number = s[..s.len() - suffix_len]
+    if raw_suffix.is_none() {
+        let trimmed_rest = rest.trim_start_matches(is_newline_or_blank);
+        if trimmed_rest.is_empty() {
+            return Ok((number, None));
+        }
+        return Err(translate!("numfmt-error-invalid-suffix", "input" => original.quote()));
+    }
+
+    let mut consumed_len = first.len_utf8();
+    let mut with_i = false;
+
+    if rest[consumed_len..].starts_with('i') {
+        with_i = true;
+        consumed_len += 'i'.len_utf8();
+    }
+
+    let leftover = rest[consumed_len..].trim_start_matches(is_newline_or_blank);
+
+    if !leftover.is_empty() {
+        return Err(translate!(
+            "numfmt-error-invalid-suffix-detail",
+            "input" => original.quote(),
+            "suffix" => leftover.quote()
+        ));
+    }
+
+    Ok((number, Some((raw_suffix.unwrap(), with_i))))
+}
+
+fn parse_suffix_with_explicit_suffix(
+    trimmed: &str,
+    unit_separator: Option<&str>,
+    original: &str,
+) -> Result<(f64, Option<Suffix>)> {
+    let mut body = trimmed;
+    let mut with_i = false;
+
+    if body.ends_with('i') {
+        with_i = true;
+        body = &body[..body.len() - 'i'.len_utf8()];
+        if body.is_empty() {
+            return Err(translate!("numfmt-error-invalid-suffix", "input" => original.quote()));
+        }
+    }
+
+    let Some(last_char) = body.chars().next_back() else {
+        return Err(translate!("numfmt-error-invalid-number", "input" => original.quote()));
+    };
+
+    let raw_suffix = match last_char {
+        'K' => Some(RawSuffix::K),
+        'M' => Some(RawSuffix::M),
+        'G' => Some(RawSuffix::G),
+        'T' => Some(RawSuffix::T),
+        'P' => Some(RawSuffix::P),
+        'E' => Some(RawSuffix::E),
+        'Z' => Some(RawSuffix::Z),
+        'Y' => Some(RawSuffix::Y),
+        _ => None,
+    };
+
+    let Some(raw_suffix) = raw_suffix else {
+        return Err(translate!("numfmt-error-invalid-suffix", "input" => original.quote()));
+    };
+
+    let suffix_start = body.len() - last_char.len_utf8();
+    let (number_part, _) = strip_unit_separator_from_end(&body[..suffix_start], unit_separator);
+
+    if number_part.is_empty() {
+        return Err(translate!("numfmt-error-invalid-number", "input" => original.quote()));
+    }
+
+    let number = number_part
         .parse::<f64>()
-        .map_err(|_| translate!("numfmt-error-invalid-number", "input" => s.quote()))?;
+        .map_err(|_| translate!("numfmt-error-invalid-number", "input" => original.quote()))?;
 
-    Ok((number, suffix))
+    Ok((number, Some((raw_suffix, with_i))))
 }
 
 /// Returns the implicit precision of a number, which is the count of digits after the dot. For
@@ -146,8 +303,8 @@ fn remove_suffix(i: f64, s: Option<Suffix>, u: &Unit) -> Result<f64> {
     }
 }
 
-fn transform_from(s: &str, opts: &TransformOptions) -> Result<f64> {
-    let (i, suffix) = parse_suffix(s)?;
+fn transform_from(s: &str, opts: &TransformOptions, unit_separator: Option<&str>) -> Result<f64> {
+    let (i, suffix) = parse_suffix(s, unit_separator)?;
     let i = i * (opts.from_unit as f64);
 
     remove_suffix(i, suffix, &opts.from).map(|n| {
@@ -256,9 +413,11 @@ fn transform_to(
     opts: &TransformOptions,
     round_method: RoundMethod,
     precision: usize,
+    unit_separator: Option<&str>,
 ) -> Result<String> {
     let (i2, s) = consider_suffix(s, &opts.to, round_method, precision)?;
     let i2 = i2 / (opts.to_unit as f64);
+    let separator = unit_separator.unwrap_or("");
     Ok(match s {
         None => {
             format!(
@@ -267,10 +426,15 @@ fn transform_to(
             )
         }
         Some(s) if precision > 0 => {
-            format!("{i2:.precision$}{}", DisplayableSuffix(s, opts.to),)
+            format!(
+                "{i2:.precision$}{separator}{}",
+                DisplayableSuffix(s, opts.to),
+            )
         }
-        Some(s) if i2.abs() < 10.0 => format!("{i2:.1}{}", DisplayableSuffix(s, opts.to)),
-        Some(s) => format!("{i2:.0}{}", DisplayableSuffix(s, opts.to)),
+        Some(s) if i2.abs() < 10.0 => {
+            format!("{i2:.1}{separator}{}", DisplayableSuffix(s, opts.to))
+        }
+        Some(s) => format!("{i2:.0}{separator}{}", DisplayableSuffix(s, opts.to)),
     })
 }
 
@@ -293,11 +457,14 @@ fn format_string(
         0
     };
 
+    let unit_separator = options.unit_separator.as_deref();
+
     let number = transform_to(
-        transform_from(source_without_suffix, &options.transform)?,
+        transform_from(source_without_suffix, &options.transform, unit_separator)?,
         &options.transform,
         options.round,
         precision,
+        unit_separator,
     )?;
 
     // bring back the suffix before applying padding
@@ -356,6 +523,20 @@ fn format_and_print_delimited(s: &str, options: &NumfmtOptions) -> Result<()> {
     Ok(())
 }
 
+fn format_and_print_undelimited(s: &str, options: &NumfmtOptions) -> Result<()> {
+    let field_selected = uucore::ranges::contain(&options.fields, 1);
+
+    if field_selected {
+        print!("{}", format_string(s, options, None)?);
+    } else {
+        print!("{s}");
+    }
+
+    println!();
+
+    Ok(())
+}
+
 fn format_and_print_whitespace(s: &str, options: &NumfmtOptions) -> Result<()> {
     for (n, (prefix, field)) in (1..).zip(WhitespaceSplitter { s: Some(s) }) {
         let field_selected = uucore::ranges::contain(&options.fields, n);
@@ -403,7 +584,8 @@ fn format_and_print_whitespace(s: &str, options: &NumfmtOptions) -> Result<()> {
 /// any selected numeric fields, and print the result to stdout. Fields not
 /// selected for conversion are passed through unmodified.
 pub fn format_and_print(s: &str, options: &NumfmtOptions) -> Result<()> {
-    match &options.delimiter {
+    match options.delimiter.as_deref() {
+        Some("") => format_and_print_undelimited(s, options),
         Some(_) => format_and_print_delimited(s, options),
         None => format_and_print_whitespace(s, options),
     }

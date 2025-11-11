@@ -27,6 +27,7 @@ pub const TO: &str = "to";
 pub const TO_DEFAULT: &str = "none";
 pub const TO_UNIT: &str = "to-unit";
 pub const TO_UNIT_DEFAULT: &str = "1";
+pub const UNIT_SEPARATOR: &str = "unit-separator";
 pub const ZERO_TERMINATED: &str = "zero-terminated";
 
 pub struct TransformOptions {
@@ -50,6 +51,7 @@ pub struct NumfmtOptions {
     pub header: usize,
     pub fields: Vec<Range>,
     pub delimiter: Option<String>,
+    pub unit_separator: Option<String>,
     pub round: RoundMethod,
     pub suffix: Option<String>,
     pub format: FormatOptions,

@@ -19,6 +19,7 @@ path = "src/numfmt.rs"
 
 [dependencies]
 clap = { workspace = true }
+lexical-core = { workspace = true }
 uucore = { workspace = true, features = ["parser", "ranges"] }
 thiserror = { workspace = true }
 fluent = { workspace = true }

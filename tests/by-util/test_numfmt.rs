@@ -279,7 +279,7 @@ fn test_should_report_invalid_number_with_interior_junk() {
         .args(&["--from=auto"])
         .pipe_in("1x0K")
         .fails()
-        .stderr_is("numfmt: invalid number: '1x0K'\n");
+        .stderr_is("numfmt: invalid suffix in input: '1x0K'\n");
 }
 
 #[test]
@@ -477,7 +477,15 @@ fn test_delimiter_must_not_be_more_than_one_character() {
     new_ucmd!()
         .args(&["--delimiter", "sad"])
         .fails()
-        .stderr_is("numfmt: the delimiter must be a single character\n");
+        .stderr_is("numfmt: the delimiter must be empty or a single character\n");
+}
+
+#[test]
+fn test_empty_string_delimiter_treats_whole_line_as_field() {
+    new_ucmd!()
+        .args(&["-d", "", "--from=si", "4.0 K"])
+        .succeeds()
+        .stdout_is("4000\n");
 }
 
 #[test]
@@ -541,7 +549,7 @@ fn test_delimiter_overrides_whitespace_separator() {
         .args(&["-d,"])
         .pipe_in("1 234,56")
         .fails()
-        .stderr_is("numfmt: invalid number: '1 234'\n");
+        .stderr_is("numfmt: invalid suffix in input: '1 234'\n");
 }
 
 #[test]
@@ -668,6 +676,38 @@ fn test_transform_with_suffix_and_delimiter() {
         .pipe_in("1000b|2000|3000")
         .succeeds()
         .stdout_only("1.0kb|2000|3000\n");
+}
+
+#[test]
+fn test_unit_separator_on_output() {
+    new_ucmd!()
+        .args(&["--to=si", "--unit-separator", " ", "1000"])
+        .succeeds()
+        .stdout_is("1.0 k\n");
+}
+
+#[test]
+fn test_unit_separator_on_input() {
+    new_ucmd!()
+        .args(&["-d", "", "--from=si", "--unit-separator", " ", "1 K"])
+        .succeeds()
+        .stdout_is("1000\n");
+}
+
+#[test]
+fn test_unit_separator_empty_disables_blank_matching() {
+    new_ucmd!()
+        .args(&["-d", "", "--from=si", "--unit-separator", "", "1 K"])
+        .fails()
+        .stderr_is("numfmt: invalid suffix in input: '1 K'\n");
+}
+
+#[test]
+fn test_invalid_suffix_reports_trailing_fragment() {
+    new_ucmd!()
+        .args(&["--from=si", "4MJ"])
+        .fails()
+        .stderr_is("numfmt: invalid suffix in input '4MJ': 'J'\n");
 }
 
 #[test]

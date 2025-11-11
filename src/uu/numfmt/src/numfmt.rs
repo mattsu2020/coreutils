@@ -213,7 +213,7 @@ fn parse_options(args: &ArgMatches) -> Result<NumfmtOptions> {
     }
 
     let delimiter = args.get_one::<String>(DELIMITER).map_or(Ok(None), |arg| {
-        if arg.len() == 1 {
+        if arg.len() <= 1 {
             Ok(Some(arg.to_owned()))
         } else {
             Err(translate!(
@@ -221,6 +221,8 @@ fn parse_options(args: &ArgMatches) -> Result<NumfmtOptions> {
             ))
         }
     })?;
+
+    let unit_separator = args.get_one::<String>(UNIT_SEPARATOR).cloned();
 
     // unwrap is fine because the argument has a default value
     let round = match args.get_one::<String>(ROUND).unwrap().as_str() {
@@ -249,6 +251,7 @@ fn parse_options(args: &ArgMatches) -> Result<NumfmtOptions> {
         format,
         invalid,
         zero_terminated,
+        unit_separator,
     })
 }
 
@@ -385,6 +388,13 @@ pub fn uu_app() -> Command {
                 .help(translate!("numfmt-help-zero-terminated"))
                 .action(ArgAction::SetTrue),
         )
+        .arg(
+            Arg::new(UNIT_SEPARATOR)
+                .long(UNIT_SEPARATOR)
+                .visible_alias("unit-sep")
+                .value_name("SEP")
+                .help(translate!("numfmt-help-unit-separator")),
+        )
         .arg(Arg::new(NUMBER).hide(true).action(ArgAction::Append))
 }
 
@@ -417,6 +427,7 @@ mod tests {
             header: 1,
             fields: vec![Range { low: 0, high: 1 }],
             delimiter: None,
+            unit_separator: None,
             round: RoundMethod::Nearest,
             suffix: None,
             format: FormatOptions::default(),
