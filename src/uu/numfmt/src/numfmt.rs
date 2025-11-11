@@ -167,18 +167,18 @@ fn process_input_line(
     options: &NumfmtOptions,
 ) -> UResult<()> {
     if idx < options.header {
-        print_with_terminator(line, terminator, options.zero_terminated);
+        print_with_terminator(line, terminator);
         Ok(())
     } else {
         format_and_handle_validation(line, terminator, options)
     }
 }
 
-fn print_with_terminator(line: &str, terminator: Option<char>, zero_terminated: bool) {
-    match terminator {
-        Some(term) => print!("{line}{term}"),
-        None if zero_terminated => print!("{line}"),
-        None => println!("{line}"),
+fn print_with_terminator(line: &str, terminator: Option<char>) {
+    if let Some(term) = terminator {
+        print!("{line}{term}");
+    } else {
+        print!("{line}");
     }
 }
 
@@ -206,7 +206,7 @@ fn format_and_handle_validation(
                 options.debug_invalid_encountered.set(true);
             }
         }
-        print_with_terminator(input_line, terminator, options.zero_terminated);
+        print_with_terminator(input_line, terminator);
     }
 
     Ok(())

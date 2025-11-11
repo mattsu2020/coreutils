@@ -783,12 +783,22 @@ fn test_invalid_stdin_number_in_middle_of_input() {
 }
 
 #[test]
+fn test_invalid_stdin_without_trailing_newline_preserves_output() {
+    new_ucmd!()
+        .args(&["--invalid=fail"])
+        .pipe_in("no_NL")
+        .fails_with_code(2)
+        .stdout_is("no_NL")
+        .stderr_is("numfmt: invalid number: 'no_NL'\n");
+}
+
+#[test]
 fn test_invalid_stdin_number_with_warn_returns_status_0() {
     new_ucmd!()
         .args(&["--invalid=warn"])
         .pipe_in("4Q")
         .succeeds()
-        .stdout_is("4Q\n")
+        .stdout_is("4Q")
         .stderr_is("numfmt: rejecting suffix in input: '4Q' (consider using --from)\n");
 }
 
@@ -798,7 +808,7 @@ fn test_invalid_stdin_number_with_ignore_returns_status_0() {
         .args(&["--invalid=ignore"])
         .pipe_in("4Q")
         .succeeds()
-        .stdout_only("4Q\n");
+        .stdout_only("4Q");
 }
 
 #[test]
@@ -816,7 +826,7 @@ fn test_invalid_stdin_number_with_fail_returns_status_2() {
         .args(&["--invalid=fail"])
         .pipe_in("4Q")
         .fails_with_code(2)
-        .stdout_is("4Q\n")
+        .stdout_is("4Q")
         .stderr_is("numfmt: rejecting suffix in input: '4Q' (consider using --from)\n");
 }
 
