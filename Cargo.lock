@@ -3765,6 +3765,7 @@ dependencies = [
  "clap",
  "codspeed-divan-compat",
  "fluent",
+ "libc",
  "tempfile",
  "thiserror 2.0.17",
  "uucore",

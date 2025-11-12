@@ -7,6 +7,7 @@ use std::io::{self, Write};
 use uucore::display::Quotable;
 use uucore::translate;
 
+use crate::locale::NumericLocale;
 use crate::options::{DelimiterKind, InvalidModes, NumfmtOptions, RoundMethod, TransformOptions};
 use crate::units::{DisplayableSuffix, IEC_BASES, RawSuffix, Result, SI_BASES, Suffix, Unit};
 
@@ -129,7 +130,11 @@ fn strip_unit_separator_from_end<'a>(
     (input, false)
 }
 
-fn parse_suffix(s: &str, unit_separator: Option<&str>) -> Result<(f64, Option<Suffix>)> {
+fn parse_suffix(
+    s: &str,
+    unit_separator: Option<&str>,
+    locale: &NumericLocale,
+) -> Result<(f64, Option<Suffix>)> {
     if s.is_empty() {
         return Err(translate!("numfmt-error-invalid-number-empty"));
     }
@@ -152,70 +157,107 @@ fn parse_suffix(s: &str, unit_separator: Option<&str>) -> Result<(f64, Option<Su
         return Err(translate!("numfmt-error-invalid-number", "input" => s.quote()));
     }
 
-    match numeric_prefix_len(trimmed) {
-        Some(consumed) => {
-            let number_part = &trimmed[..consumed];
-            let number = number_part
-                .parse::<f64>()
-                .map_err(|_| translate!("numfmt-error-invalid-number", "input" => s.quote()))?;
-            handle_suffix_after_number(s, trimmed, number, consumed, unit_separator)
+    if let Some((consumed, normalized)) = parse_locale_numeric_prefix(trimmed, locale) {
+        if trimmed[..consumed].ends_with('.')
+            || trimmed[..consumed].ends_with(locale.decimal_point())
+        {
+            return Err(translate!("numfmt-error-invalid-number", "input" => s.quote()));
         }
-        None => parse_suffix_with_explicit_suffix(trimmed, unit_separator, s),
+
+        let number = normalized
+            .parse::<f64>()
+            .map_err(|_| translate!("numfmt-error-invalid-number", "input" => s.quote()))?;
+        handle_suffix_after_number(s, trimmed, number, consumed, unit_separator, locale)
+    } else {
+        parse_suffix_with_explicit_suffix(trimmed, unit_separator, s, locale)
     }
 }
 
-fn numeric_prefix_len(s: &str) -> Option<usize> {
-    let bytes = s.as_bytes();
-    let len = bytes.len();
-    let mut idx = 0;
-
-    if idx < len && matches!(bytes[idx], b'+' | b'-') {
-        idx += 1;
-    }
-
+fn parse_locale_numeric_prefix(s: &str, locale: &NumericLocale) -> Option<(usize, String)> {
+    let len = s.len();
+    let mut consumed = 0;
+    let mut normalized = String::with_capacity(len);
     let mut has_digits = false;
-    while idx < len && bytes[idx].is_ascii_digit() {
-        idx += 1;
-        has_digits = true;
-    }
+    let mut seen_decimal = false;
+    let mut seen_exp = false;
+    let mut allow_sign = true;
 
-    if idx < len && bytes[idx] == b'.' {
-        idx += 1;
-        let start_frac = idx;
-        while idx < len && bytes[idx].is_ascii_digit() {
-            idx += 1;
+    while consumed < len {
+        if !locale.grouping_sep().is_empty() && !seen_decimal && !seen_exp {
+            if s[consumed..].starts_with(locale.grouping_sep()) {
+                consumed += locale.grouping_sep().len();
+                continue;
+            }
+        }
+
+        let current = s[consumed..].chars().next().unwrap();
+        let ch_len = current.len_utf8();
+
+        if allow_sign && matches!(current, '+' | '-') {
+            normalized.push(current);
+            consumed += ch_len;
+            allow_sign = false;
+            continue;
+        }
+
+        if current.is_ascii_digit() {
+            normalized.push(current);
+            consumed += ch_len;
             has_digits = true;
+            allow_sign = false;
+            continue;
         }
-        if !has_digits && idx == start_frac {
-            // there was no digit before or after the decimal point
-            return None;
+
+        if !seen_decimal && (current == '.' || current == locale.decimal_point()) {
+            normalized.push('.');
+            consumed += ch_len;
+            seen_decimal = true;
+            allow_sign = false;
+            continue;
         }
+
+        if !seen_exp && has_digits && matches!(current, 'e' | 'E') {
+            let rest_slice = &s[consumed + ch_len..];
+            if has_exponent_digits(rest_slice) {
+                normalized.push(current);
+                consumed += ch_len;
+                seen_exp = true;
+                allow_sign = true;
+                continue;
+            } else {
+                break;
+            }
+        }
+
+        if seen_exp && allow_sign && matches!(current, '+' | '-') {
+            normalized.push(current);
+            consumed += ch_len;
+            allow_sign = false;
+            continue;
+        }
+
+        break;
     }
 
     if !has_digits {
         return None;
     }
 
-    let mut consumed = idx;
-    if idx < len && matches!(bytes[idx], b'e' | b'E') {
-        let exp_start = idx;
-        idx += 1;
-        if idx < len && matches!(bytes[idx], b'+' | b'-') {
-            idx += 1;
-        }
-        let digits_start = idx;
-        while idx < len && bytes[idx].is_ascii_digit() {
-            idx += 1;
-        }
-        if digits_start == idx {
-            // no exponent digits -> treat the 'e/E' as suffix instead
-            consumed = exp_start;
-        } else {
-            consumed = idx;
+    Some((consumed, normalized))
+}
+
+fn has_exponent_digits(rest: &str) -> bool {
+    let mut slice = rest;
+    if let Some(first) = slice.chars().next() {
+        if matches!(first, '+' | '-') {
+            slice = &slice[first.len_utf8()..];
         }
     }
-
-    Some(consumed)
+    slice
+        .chars()
+        .next()
+        .map(|c| c.is_ascii_digit())
+        .unwrap_or(false)
 }
 
 fn handle_suffix_after_number(
@@ -224,10 +266,11 @@ fn handle_suffix_after_number(
     number: f64,
     consumed: usize,
     unit_separator: Option<&str>,
+    locale: &NumericLocale,
 ) -> Result<(f64, Option<Suffix>)> {
     let mut rest = &trimmed[consumed..];
 
-    if trimmed[..consumed].ends_with('.') {
+    if trimmed[..consumed].ends_with('.') || trimmed[..consumed].ends_with(locale.decimal_point()) {
         return Err(translate!("numfmt-error-invalid-number", "input" => original.quote()));
     }
 
@@ -284,6 +327,7 @@ fn parse_suffix_with_explicit_suffix(
     trimmed: &str,
     unit_separator: Option<&str>,
     original: &str,
+    locale: &NumericLocale,
 ) -> Result<(f64, Option<Suffix>)> {
     let mut body = trimmed;
     let mut with_i = false;
@@ -310,11 +354,131 @@ fn parse_suffix_with_explicit_suffix(
         return Err(translate!("numfmt-error-invalid-number", "input" => original.quote()));
     }
 
-    let number = number_part
-        .parse::<f64>()
-        .map_err(|_| translate!("numfmt-error-invalid-number", "input" => original.quote()))?;
+    let number = parse_locale_number_full(number_part, locale, original)?;
 
     Ok((number, Some((raw_suffix, with_i))))
+}
+
+fn parse_locale_number_full(value: &str, locale: &NumericLocale, original: &str) -> Result<f64> {
+    if let Some((consumed, normalized)) = parse_locale_numeric_prefix(value, locale) {
+        if consumed != value.len() {
+            return Err(translate!("numfmt-error-invalid-number", "input" => original.quote()));
+        }
+        if value.ends_with('.') || value.ends_with(locale.decimal_point()) {
+            return Err(translate!("numfmt-error-invalid-number", "input" => original.quote()));
+        }
+
+        normalized
+            .parse::<f64>()
+            .map_err(|_| translate!("numfmt-error-invalid-number", "input" => original.quote()))
+    } else {
+        Err(translate!("numfmt-error-invalid-number", "input" => original.quote()))
+    }
+}
+
+fn numeric_prefix_end(value: &str) -> usize {
+    let mut end = 0;
+    for (idx, ch) in value.char_indices() {
+        if ch.is_ascii_digit() || matches!(ch, '+' | '-' | '.') {
+            end = idx + ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    end
+}
+
+fn apply_grouping(value: &str, locale: &NumericLocale) -> String {
+    let grouping_sep = locale.grouping_sep();
+    if grouping_sep.is_empty() {
+        return value.to_owned();
+    }
+
+    let numeric_end = numeric_prefix_end(value);
+    if numeric_end == 0 {
+        return value.to_owned();
+    }
+
+    let (numeric_part, rest) = value.split_at(numeric_end);
+    if numeric_part.is_empty() {
+        return value.to_owned();
+    }
+
+    let (sign, digits) = if let Some(first) = numeric_part.chars().next() {
+        if matches!(first, '+' | '-') {
+            (Some(first), &numeric_part[first.len_utf8()..])
+        } else {
+            (None, numeric_part)
+        }
+    } else {
+        (None, numeric_part)
+    };
+
+    let (integer_part, fractional_part) = digits.split_once('.').unwrap_or((digits, ""));
+    let grouped_integer = group_integer_part(integer_part, grouping_sep);
+
+    let mut grouped = String::with_capacity(numeric_part.len() + grouping_sep.len() * 4);
+    if let Some(sign_char) = sign {
+        grouped.push(sign_char);
+    }
+    grouped.push_str(&grouped_integer);
+    if !fractional_part.is_empty() {
+        grouped.push('.');
+        grouped.push_str(fractional_part);
+    }
+    grouped.push_str(rest);
+
+    grouped
+}
+
+fn group_integer_part(integer_part: &str, grouping_sep: &str) -> String {
+    if integer_part.is_empty() {
+        return String::new();
+    }
+
+    let mut groups = Vec::new();
+    let mut chunk = String::new();
+    let mut count = 0;
+
+    for ch in integer_part.chars().rev() {
+        chunk.push(ch);
+        count += 1;
+        if count == 3 {
+            groups.push(chunk.chars().rev().collect::<String>());
+            chunk.clear();
+            count = 0;
+        }
+    }
+    if !chunk.is_empty() {
+        groups.push(chunk.chars().rev().collect::<String>());
+    }
+
+    groups.reverse();
+    groups.join(grouping_sep)
+}
+
+fn localize_decimal_point(value: &str, locale: &NumericLocale) -> String {
+    let decimal_char = locale.decimal_point();
+    if decimal_char == '.' {
+        return value.to_owned();
+    }
+
+    let numeric_end = numeric_prefix_end(value);
+    if numeric_end == 0 {
+        return value.to_owned();
+    }
+
+    let (numeric_part, rest) = value.split_at(numeric_end);
+    if let Some(pos) = numeric_part.find('.') {
+        let mut localized = String::with_capacity(value.len());
+        localized.push_str(&numeric_part[..pos]);
+        localized.push(decimal_char);
+        localized.push_str(&numeric_part[pos + 1..]);
+        localized.push_str(rest);
+        localized
+    } else {
+        value.to_owned()
+    }
 }
 
 /// Returns the implicit precision of a number, which is the count of digits after the dot. For
@@ -367,8 +531,13 @@ fn remove_suffix(i: f64, s: Option<Suffix>, u: &Unit) -> Result<f64> {
     }
 }
 
-fn transform_from(s: &str, opts: &TransformOptions, unit_separator: Option<&str>) -> Result<f64> {
-    let (i, suffix) = parse_suffix(s, unit_separator)?;
+fn transform_from(
+    s: &str,
+    opts: &TransformOptions,
+    unit_separator: Option<&str>,
+    locale: &NumericLocale,
+) -> Result<f64> {
+    let (i, suffix) = parse_suffix(s, unit_separator, locale)?;
     let i = i * (opts.from_unit as f64);
 
     remove_suffix(i, suffix, &opts.from).map(|n| {
@@ -527,17 +696,30 @@ fn format_string(
     let unit_separator = options.unit_separator.as_deref();
 
     let number = transform_to(
-        transform_from(source_without_suffix, &options.transform, unit_separator)?,
+        transform_from(
+            source_without_suffix,
+            &options.transform,
+            unit_separator,
+            &options.numeric_locale,
+        )?,
         &options.transform,
         options.round,
         precision,
         unit_separator,
     )?;
 
+    let grouped_number = if options.grouping || options.format.grouping {
+        apply_grouping(&number, &options.numeric_locale)
+    } else {
+        number
+    };
+
+    let localized_number = localize_decimal_point(&grouped_number, &options.numeric_locale);
+
     // bring back the suffix before applying padding
     let number_with_suffix = match &options.suffix {
-        Some(suffix) => format!("{number}{suffix}"),
-        None => number,
+        Some(suffix) => format!("{localized_number}{suffix}"),
+        None => localized_number,
     };
 
     let padding = options
@@ -866,6 +1048,7 @@ pub fn format_and_print(s: &str, options: &NumfmtOptions) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::locale;
 
     #[test]
     #[allow(clippy::cognitive_complexity)]
@@ -904,7 +1087,8 @@ mod tests {
     fn parse_suffix_accepts_additional_nbsp_variants() {
         for ch in ['\u{00A0}', '\u{2007}', '\u{202F}', '\u{2003}'] {
             let input = format!("2{ch}K");
-            let (value, suffix) = parse_suffix(&input, None).unwrap();
+            let numeric_locale = locale::get_numeric_locale();
+            let (value, suffix) = parse_suffix(&input, None, numeric_locale).unwrap();
             assert_eq!(value, 2.0);
             assert_eq!(suffix, Some((RawSuffix::K, false)));
         }
@@ -913,7 +1097,8 @@ mod tests {
     #[test]
     fn parse_suffix_accepts_word_joiner() {
         let input = "2\u{2060}Ki";
-        let (value, suffix) = parse_suffix(input, None).unwrap();
+        let numeric_locale = locale::get_numeric_locale();
+        let (value, suffix) = parse_suffix(input, None, numeric_locale).unwrap();
         assert_eq!(value, 2.0);
         assert_eq!(suffix, Some((RawSuffix::K, true)));
     }

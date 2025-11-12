@@ -31,6 +31,7 @@ const NON_UTF8_DELIM_PLACEHOLDER: &str = "__UU_NON_UTF8_DELIM__";
 
 pub mod errors;
 pub mod format;
+pub mod locale;
 pub mod options;
 mod units;
 
@@ -595,6 +596,7 @@ fn parse_options(args: &ArgMatches, raw_delimiter: Option<Vec<u8>>) -> Result<Nu
     let invalid = InvalidModes::from_str(args.get_one::<String>(INVALID).unwrap()).unwrap();
 
     let zero_terminated = args.get_flag(ZERO_TERMINATED);
+    let numeric_locale = locale::get_numeric_locale().clone();
 
     if debug_flag && padding != 0 {
         if let Some(pad) = format.padding {
@@ -621,6 +623,7 @@ fn parse_options(args: &ArgMatches, raw_delimiter: Option<Vec<u8>>) -> Result<Nu
         dev_debug: dev_debug_flag,
         format_specified,
         debug_invalid_encountered: Cell::new(false),
+        numeric_locale,
     })
 }
 
@@ -797,6 +800,7 @@ pub fn uu_app() -> Command {
 
 #[cfg(test)]
 mod tests {
+    use crate::locale;
     use std::cell::Cell;
     use uucore::error::get_exit_code;
 
@@ -836,6 +840,7 @@ mod tests {
             dev_debug: false,
             format_specified: false,
             debug_invalid_encountered: Cell::new(false),
+            numeric_locale: locale::get_numeric_locale().clone(),
         }
     }
 

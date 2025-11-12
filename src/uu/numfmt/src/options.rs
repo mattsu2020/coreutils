@@ -5,6 +5,7 @@
 use std::cell::Cell;
 use std::str::FromStr;
 
+use crate::locale::NumericLocale;
 use crate::units::Unit;
 use uucore::ranges::Range;
 use uucore::translate;
@@ -72,6 +73,7 @@ pub struct NumfmtOptions {
     pub dev_debug: bool,
     pub format_specified: bool,
     pub debug_invalid_encountered: Cell<bool>,
+    pub numeric_locale: NumericLocale,
 }
 
 #[derive(Clone, Copy)]
