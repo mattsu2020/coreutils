@@ -565,7 +565,7 @@ fn format_string(
     ))
 }
 
-fn unicode_delimiter<'a>(options: &'a NumfmtOptions) -> &'a str {
+fn unicode_delimiter(options: &NumfmtOptions) -> &str {
     match options
         .delimiter
         .as_ref()

@@ -421,17 +421,17 @@ fn parse_field_args(
         return Err(multiple_field_specifications_error());
     }
 
-    let spec = provided.get(0).copied().unwrap_or(FIELD_DEFAULT);
+    let spec = provided.first().copied().unwrap_or(FIELD_DEFAULT);
 
     if spec
-        .split(|c| matches!(c, ',' | ' ' | '\t'))
+        .split(|c| [',', ' ', '\t'].contains(&c))
         .all(|piece| piece.is_empty())
     {
         return Err(missing_fields_error());
     }
 
     if spec
-        .split(|c| matches!(c, ',' | ' ' | '\t'))
+        .split(|c| [',', ' ', '\t'].contains(&c))
         .any(|piece| piece == "-")
     {
         return Ok(vec![Range {
