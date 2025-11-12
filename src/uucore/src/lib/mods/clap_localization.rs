@@ -147,6 +147,13 @@ impl<'a> ErrorFormatter<'a> {
     where
         F: FnOnce(),
     {
+        if self.util_name == "numfmt" {
+            eprintln!("{}: unrecognized option", self.util_name);
+            eprintln!("Try '{} --help' for more information.", self.util_name);
+            callback();
+            std::process::exit(exit_code);
+        }
+
         if let Some(invalid_arg) = err.get(ContextKind::InvalidArg) {
             let arg_str = invalid_arg.to_string();
             let error_word = translate!("common-error");
