@@ -3,10 +3,11 @@
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 // spell-checker:ignore powf undelimited
+use std::io::{self, Write};
 use uucore::display::Quotable;
 use uucore::translate;
 
-use crate::options::{NumfmtOptions, RoundMethod, TransformOptions};
+use crate::options::{DelimiterKind, InvalidModes, NumfmtOptions, RoundMethod, TransformOptions};
 use crate::units::{DisplayableSuffix, IEC_BASES, RawSuffix, Result, SI_BASES, Suffix, Unit};
 
 /// Iterate over a line's fields, where each field is a contiguous sequence of
@@ -225,6 +226,10 @@ fn handle_suffix_after_number(
     unit_separator: Option<&str>,
 ) -> Result<(f64, Option<Suffix>)> {
     let mut rest = &trimmed[consumed..];
+
+    if trimmed[..consumed].ends_with('.') {
+        return Err(translate!("numfmt-error-invalid-number", "input" => original.quote()));
+    }
 
     if rest.is_empty() {
         return Ok((number, None));
@@ -543,16 +548,15 @@ fn format_string(
     let padded_number = match padding {
         0 => number_with_suffix,
         p if p > 0 && options.format.zero_padding => {
-            let zero_padded = format!("{number_with_suffix:0>padding$}", padding = p as usize);
-
+            let zero_padded = pad_with_width(&number_with_suffix, p as usize, false, '0');
             match implicit_padding.unwrap_or(options.padding) {
                 0 => zero_padded,
-                p if p > 0 => format!("{zero_padded:>padding$}", padding = p as usize),
-                p => format!("{zero_padded:<padding$}", padding = p.unsigned_abs()),
+                extra if extra > 0 => pad_with_width(&zero_padded, extra as usize, false, ' '),
+                extra => pad_with_width(&zero_padded, width_from_isize(extra), true, ' '),
             }
         }
-        p if p > 0 => format!("{number_with_suffix:>padding$}", padding = p as usize),
-        p => format!("{number_with_suffix:<padding$}", padding = p.unsigned_abs()),
+        p if p > 0 => pad_with_width(&number_with_suffix, p as usize, false, ' '),
+        p => pad_with_width(&number_with_suffix, width_from_isize(p), true, ' '),
     };
 
     Ok(format!(
@@ -561,13 +565,107 @@ fn format_string(
     ))
 }
 
-fn format_and_print_delimited(s: &str, options: &NumfmtOptions) -> Result<()> {
-    let delimiter = options.delimiter.as_ref().unwrap();
+fn unicode_delimiter<'a>(options: &'a NumfmtOptions) -> &'a str {
+    match options
+        .delimiter
+        .as_ref()
+        .expect("delimiter should be present for unicode variant")
+    {
+        DelimiterKind::Unicode(text) => text,
+        DelimiterKind::Bytes(_) => unreachable!("expected unicode delimiter, found byte delimiter"),
+    }
+}
+
+fn format_and_print_delimited_buffered(s: &str, options: &NumfmtOptions) -> Result<()> {
+    let delimiter = unicode_delimiter(options);
+    let mut output = String::with_capacity(s.len() + delimiter.len());
 
     for (n, field) in (1..).zip(s.split(delimiter)) {
         let field_selected = uucore::ranges::contain(&options.fields, n);
 
-        // print delimiter before second and subsequent fields
+        if n > 1 {
+            output.push_str(delimiter);
+        }
+
+        if field_selected {
+            output.push_str(&format_string(field.trim_start(), options, None)?);
+        } else {
+            output.push_str(field);
+        }
+    }
+
+    output.push(line_terminator(options));
+    print!("{output}");
+
+    Ok(())
+}
+
+fn format_and_print_undelimited_buffered(s: &str, options: &NumfmtOptions) -> Result<()> {
+    let field_selected = uucore::ranges::contain(&options.fields, 1);
+    let mut output = String::with_capacity(s.len() + 1);
+
+    if field_selected {
+        output.push_str(&format_string(s, options, None)?);
+    } else {
+        output.push_str(s);
+    }
+
+    output.push(line_terminator(options));
+    print!("{output}");
+
+    Ok(())
+}
+
+fn format_and_print_whitespace_buffered(s: &str, options: &NumfmtOptions) -> Result<()> {
+    let mut output = String::with_capacity(s.len() + 1);
+
+    for (n, (prefix, field)) in (1..).zip(WhitespaceSplitter { s: Some(s) }) {
+        let field_selected = uucore::ranges::contain(&options.fields, n);
+
+        if field_selected {
+            let empty_prefix = prefix.is_empty();
+            let prefix = if n > 1 {
+                output.push(' ');
+                &prefix[1..]
+            } else {
+                prefix
+            };
+
+            let implicit_padding = if !empty_prefix && options.padding == 0 {
+                Some((prefix.len() + field.len()) as isize)
+            } else {
+                None
+            };
+
+            output.push_str(&format_string(field, options, implicit_padding)?);
+        } else {
+            let prefix = if options.zero_terminated && prefix.starts_with('\n') {
+                output.push(' ');
+                &prefix[1..]
+            } else {
+                prefix
+            };
+            output.push_str(prefix);
+            output.push_str(field);
+        }
+    }
+
+    output.push(line_terminator(options));
+    print!("{output}");
+
+    Ok(())
+}
+
+fn line_terminator(options: &NumfmtOptions) -> char {
+    if options.zero_terminated { '\0' } else { '\n' }
+}
+
+fn format_and_print_delimited_streaming(s: &str, options: &NumfmtOptions) -> Result<()> {
+    let delimiter = unicode_delimiter(options);
+
+    for (n, field) in (1..).zip(s.split(delimiter)) {
+        let field_selected = uucore::ranges::contain(&options.fields, n);
+
         if n > 1 {
             print!("{delimiter}");
         }
@@ -575,17 +673,16 @@ fn format_and_print_delimited(s: &str, options: &NumfmtOptions) -> Result<()> {
         if field_selected {
             print!("{}", format_string(field.trim_start(), options, None)?);
         } else {
-            // print unselected field without conversion
             print!("{field}");
         }
     }
 
-    println!();
+    print!("{}", line_terminator(options));
 
     Ok(())
 }
 
-fn format_and_print_undelimited(s: &str, options: &NumfmtOptions) -> Result<()> {
+fn format_and_print_undelimited_streaming(s: &str, options: &NumfmtOptions) -> Result<()> {
     let field_selected = uucore::ranges::contain(&options.fields, 1);
 
     if field_selected {
@@ -594,19 +691,18 @@ fn format_and_print_undelimited(s: &str, options: &NumfmtOptions) -> Result<()> 
         print!("{s}");
     }
 
-    println!();
+    print!("{}", line_terminator(options));
 
     Ok(())
 }
 
-fn format_and_print_whitespace(s: &str, options: &NumfmtOptions) -> Result<()> {
+fn format_and_print_whitespace_streaming(s: &str, options: &NumfmtOptions) -> Result<()> {
     for (n, (prefix, field)) in (1..).zip(WhitespaceSplitter { s: Some(s) }) {
         let field_selected = uucore::ranges::contain(&options.fields, n);
 
         if field_selected {
             let empty_prefix = prefix.is_empty();
 
-            // print delimiter before second and subsequent fields
             let prefix = if n > 1 {
                 print!(" ");
                 &prefix[1..]
@@ -622,22 +718,119 @@ fn format_and_print_whitespace(s: &str, options: &NumfmtOptions) -> Result<()> {
 
             print!("{}", format_string(field, options, implicit_padding)?);
         } else {
-            // the -z option converts an initial \n into a space
             let prefix = if options.zero_terminated && prefix.starts_with('\n') {
                 print!(" ");
                 &prefix[1..]
             } else {
                 prefix
             };
-            // print unselected field without conversion
             print!("{prefix}{field}");
         }
     }
 
-    let eol = if options.zero_terminated { '\0' } else { '\n' };
-    print!("{eol}");
+    print!("{}", line_terminator(options));
 
     Ok(())
+}
+
+fn format_and_print_byte_delimited_streaming(
+    s: &str,
+    delimiter: u8,
+    options: &NumfmtOptions,
+) -> Result<()> {
+    let mut stdout = io::stdout();
+
+    for (n, field_bytes) in s.as_bytes().split(|b| *b == delimiter).enumerate() {
+        if n > 0 {
+            stdout.write_all(&[delimiter]).map_err(|e| e.to_string())?;
+        }
+
+        let field_selected = uucore::ranges::contain(&options.fields, n + 1);
+        if field_selected {
+            let text = std::str::from_utf8(field_bytes)
+                .map_err(|_| invalid_number_from_bytes(field_bytes))?;
+            let formatted = format_string(text.trim_start(), options, None)?;
+            stdout
+                .write_all(formatted.as_bytes())
+                .map_err(|e| e.to_string())?;
+        } else {
+            stdout.write_all(field_bytes).map_err(|e| e.to_string())?;
+        }
+    }
+
+    stdout
+        .write_all(&[line_terminator(options) as u8])
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+fn format_and_print_byte_delimited_buffered(
+    s: &str,
+    delimiter: u8,
+    options: &NumfmtOptions,
+) -> Result<()> {
+    let mut buffer = Vec::with_capacity(s.len() + 1);
+
+    for (n, field_bytes) in s.as_bytes().split(|b| *b == delimiter).enumerate() {
+        if n > 0 {
+            buffer.push(delimiter);
+        }
+
+        let field_selected = uucore::ranges::contain(&options.fields, n + 1);
+        if field_selected {
+            let text = std::str::from_utf8(field_bytes)
+                .map_err(|_| invalid_number_from_bytes(field_bytes))?;
+            let formatted = format_string(text.trim_start(), options, None)?;
+            buffer.extend_from_slice(formatted.as_bytes());
+        } else {
+            buffer.extend_from_slice(field_bytes);
+        }
+    }
+
+    buffer.push(line_terminator(options) as u8);
+    io::stdout().write_all(&buffer).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+fn pad_with_width(value: &str, width: usize, align_left: bool, pad_char: char) -> String {
+    let current_width = value.chars().count();
+    if width <= current_width {
+        return value.to_owned();
+    }
+
+    let pad_len = width - current_width;
+    let mut result = String::with_capacity(value.len() + pad_len * pad_char.len_utf8());
+
+    if align_left {
+        result.push_str(value);
+        for _ in 0..pad_len {
+            result.push(pad_char);
+        }
+    } else {
+        for _ in 0..pad_len {
+            result.push(pad_char);
+        }
+        result.push_str(value);
+    }
+
+    result
+}
+
+fn width_from_isize(value: isize) -> usize {
+    if value >= 0 {
+        value as usize
+    } else if value == isize::MIN {
+        (isize::MAX as usize).saturating_add(1)
+    } else {
+        (-value) as usize
+    }
+}
+
+fn invalid_number_from_bytes(bytes: &[u8]) -> String {
+    let display = String::from_utf8_lossy(bytes).into_owned();
+    translate!("numfmt-error-invalid-number", "input" => display.quote())
 }
 
 /// Format a line of text according to the selected options.
@@ -646,10 +839,27 @@ fn format_and_print_whitespace(s: &str, options: &NumfmtOptions) -> Result<()> {
 /// any selected numeric fields, and print the result to stdout. Fields not
 /// selected for conversion are passed through unmodified.
 pub fn format_and_print(s: &str, options: &NumfmtOptions) -> Result<()> {
-    match options.delimiter.as_deref() {
-        Some("") => format_and_print_undelimited(s, options),
-        Some(_) => format_and_print_delimited(s, options),
-        None => format_and_print_whitespace(s, options),
+    let use_buffered = !matches!(options.invalid, InvalidModes::Abort);
+
+    match (use_buffered, &options.delimiter) {
+        (true, Some(DelimiterKind::Unicode(delim))) if delim.is_empty() => {
+            format_and_print_undelimited_buffered(s, options)
+        }
+        (true, Some(DelimiterKind::Unicode(_))) => format_and_print_delimited_buffered(s, options),
+        (true, Some(DelimiterKind::Bytes(bytes))) => {
+            format_and_print_byte_delimited_buffered(s, bytes[0], options)
+        }
+        (true, None) => format_and_print_whitespace_buffered(s, options),
+        (false, Some(DelimiterKind::Unicode(delim))) if delim.is_empty() => {
+            format_and_print_undelimited_streaming(s, options)
+        }
+        (false, Some(DelimiterKind::Unicode(_))) => {
+            format_and_print_delimited_streaming(s, options)
+        }
+        (false, Some(DelimiterKind::Bytes(bytes))) => {
+            format_and_print_byte_delimited_streaming(s, bytes[0], options)
+        }
+        (false, None) => format_and_print_whitespace_streaming(s, options),
     }
 }
 

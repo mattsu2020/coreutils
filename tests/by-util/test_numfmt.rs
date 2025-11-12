@@ -526,7 +526,19 @@ fn test_delimiter_must_not_be_more_than_one_character() {
     new_ucmd!()
         .args(&["--delimiter", "sad"])
         .fails()
-        .stderr_is("numfmt: the delimiter must be empty or a single character\n");
+        .stderr_is("numfmt: the delimiter must be a single character\n");
+}
+
+#[test]
+fn test_delimiter_allows_multibyte_character() {
+    let delim = "\u{00C2}";
+    let input = format!("1{delim}2\n");
+    let expected = input.clone();
+    new_ucmd!()
+        .args(&["--delimiter", delim, "--field=2", "--invalid=ignore"])
+        .pipe_in(input)
+        .succeeds()
+        .stdout_is(&expected);
 }
 
 #[test]
@@ -783,6 +795,16 @@ fn test_invalid_stdin_number_in_middle_of_input() {
 }
 
 #[test]
+fn test_invalid_field_with_fail_prints_line_once() {
+    new_ucmd!()
+        .args(&["--invalid=fail", "--field=3", "--from=auto"])
+        .pipe_in("Hello 40M World 90G\n")
+        .ignore_stdin_write_error()
+        .fails_with_code(2)
+        .stdout_is("Hello 40M World 90G\n");
+}
+
+#[test]
 fn test_invalid_stdin_without_trailing_newline_preserves_output() {
     new_ucmd!()
         .args(&["--invalid=fail"])
@@ -790,6 +812,49 @@ fn test_invalid_stdin_without_trailing_newline_preserves_output() {
         .fails_with_code(2)
         .stdout_is("no_NL")
         .stderr_is("numfmt: invalid number: 'no_NL'\n");
+}
+
+#[test]
+fn test_unknown_option_matches_gnu_style() {
+    new_ucmd!()
+        .args(&["--foobar"])
+        .fails()
+        .stderr_is("numfmt: unrecognized option\nTry 'numfmt --help' for more information.\n");
+}
+
+#[test]
+fn test_invalid_field_value_message() {
+    new_ucmd!().args(&["--field", "foo"]).fails().stderr_is(
+        "numfmt: invalid field value 'foo'\nTry 'numfmt --help' for more information.\n",
+    );
+}
+
+#[test]
+fn test_invalid_field_range_message() {
+    new_ucmd!()
+        .args(&["--field", "--3", "--to=si", "10"])
+        .fails()
+        .stderr_is("numfmt: invalid field range\nTry 'numfmt --help' for more information.\n");
+}
+
+#[test]
+fn test_multiple_field_specifications_error() {
+    new_ucmd!()
+        .args(&["--field", "1", "--field", "2"])
+        .fails()
+        .stderr_is("numfmt: multiple field specifications\n");
+}
+
+#[test]
+fn test_large_format_width_does_not_panic() {
+    let mut expected = String::from("--");
+    expected.push_str(&" ".repeat(99996));
+    expected.push_str("4.2k--\n");
+
+    new_ucmd!()
+        .args(&["--format", "--%100000f--", "--to=si", "4200"])
+        .succeeds()
+        .stdout_is(&expected);
 }
 
 #[test]

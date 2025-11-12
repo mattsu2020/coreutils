@@ -7,35 +7,128 @@ use crate::errors::*;
 use crate::format::format_and_print;
 use crate::options::*;
 use crate::units::{Result, Unit};
-use clap::{Arg, ArgAction, ArgMatches, Command, parser::ValueSource};
+use clap::{
+    Arg, ArgAction, ArgMatches, Command,
+    builder::OsStringValueParser,
+    error::ErrorKind,
+    parser::{ValueSource, ValuesRef},
+};
 use std::cell::Cell;
 use std::ffi::OsString;
 use std::io::{BufRead, Write};
 use std::str::FromStr;
 
 use units::{IEC_BASES, SI_BASES};
+use uucore::clap_localization::handle_clap_error_with_exit_code;
 use uucore::display::Quotable;
 use uucore::error::UResult;
 use uucore::translate;
 
 use uucore::parser::shortcut_value_parser::ShortcutValueParser;
 use uucore::ranges::Range;
-use uucore::{format_usage, show, show_error};
+use uucore::{format_usage, os_str_as_bytes, show, show_error};
+
+const NON_UTF8_DELIM_PLACEHOLDER: &str = "__UU_NON_UTF8_DELIM__";
 
 pub mod errors;
 pub mod format;
 pub mod options;
 mod units;
 
-fn normalize_arguments(args: impl uucore::Args) -> Vec<OsString> {
-    args.map(|arg| {
-        if arg == "---debug" || arg == "-debug" {
-            OsString::from("--dev-debug")
-        } else {
-            arg
+fn normalize_arguments(args: impl uucore::Args) -> (Vec<OsString>, Option<Vec<u8>>) {
+    let mut normalized = Vec::new();
+    let mut raw_delimiter: Option<Vec<u8>> = None;
+    let args: Vec<OsString> = args.collect();
+    let mut idx = 0;
+    let mut parsing_options = true;
+
+    while idx < args.len() {
+        let mut current = args[idx].clone();
+
+        if current == "---debug" || current == "-debug" {
+            current = OsString::from("--dev-debug");
         }
-    })
-    .collect()
+
+        if parsing_options && current == "--" {
+            parsing_options = false;
+            normalized.push(current);
+            idx += 1;
+            continue;
+        }
+
+        if parsing_options {
+            if let Some(value_bytes) = extract_long_delimiter_value(&current) {
+                if std::str::from_utf8(&value_bytes).is_ok() {
+                    normalized.push(current);
+                    raw_delimiter = None;
+                } else {
+                    let mut placeholder = OsString::from("--delimiter=");
+                    placeholder.push(NON_UTF8_DELIM_PLACEHOLDER);
+                    normalized.push(placeholder);
+                    raw_delimiter = Some(value_bytes);
+                }
+                idx += 1;
+                continue;
+            }
+
+            if let Some(value_bytes) = extract_short_delimiter_value(&current) {
+                if std::str::from_utf8(&value_bytes).is_ok() {
+                    normalized.push(current);
+                    raw_delimiter = None;
+                } else {
+                    normalized.push(OsString::from("-d"));
+                    normalized.push(OsString::from(NON_UTF8_DELIM_PLACEHOLDER));
+                    raw_delimiter = Some(value_bytes);
+                }
+                idx += 1;
+                continue;
+            }
+
+            if current == "--delimiter" || current == "-d" {
+                normalized.push(current.clone());
+                if let Some(next) = args.get(idx + 1).cloned() {
+                    if next.to_str().is_some() {
+                        normalized.push(next);
+                        raw_delimiter = None;
+                    } else if let Ok(bytes) = os_str_as_bytes(next.as_os_str()) {
+                        normalized.push(OsString::from(NON_UTF8_DELIM_PLACEHOLDER));
+                        raw_delimiter = Some(bytes.to_vec());
+                    } else {
+                        normalized.push(next);
+                        raw_delimiter = None;
+                    }
+                    idx += 2;
+                } else {
+                    idx += 1;
+                }
+                continue;
+            }
+        }
+
+        normalized.push(current);
+        idx += 1;
+    }
+
+    (normalized, raw_delimiter)
+}
+
+fn extract_long_delimiter_value(arg: &OsString) -> Option<Vec<u8>> {
+    let bytes = os_str_as_bytes(arg.as_os_str()).ok()?;
+    const PREFIX: &[u8] = b"--delimiter=";
+    if bytes.starts_with(PREFIX) {
+        Some(bytes[PREFIX.len()..].to_vec())
+    } else {
+        None
+    }
+}
+
+fn extract_short_delimiter_value(arg: &OsString) -> Option<Vec<u8>> {
+    let bytes = os_str_as_bytes(arg.as_os_str()).ok()?;
+    if bytes.len() > 2 && bytes[0] == b'-' && bytes[1] == b'd' {
+        Some(bytes[2..].to_vec())
+    } else {
+        None
+    }
 }
 
 fn locale_supports_grouping() -> bool {
@@ -271,7 +364,126 @@ fn parse_unit_size_suffix(s: &str) -> Option<usize> {
     None
 }
 
-fn parse_options(args: &ArgMatches) -> Result<NumfmtOptions> {
+fn try_help_message() -> String {
+    format!("Try '{} --help' for more information.", uucore::util_name())
+}
+
+fn multiple_field_specifications_error() -> NumfmtError {
+    NumfmtError::IllegalArgument("multiple field specifications".to_string())
+}
+
+fn invalid_field_value_error(value: &str) -> NumfmtError {
+    NumfmtError::IllegalArgument(format!(
+        "invalid field value {}\n{}",
+        value.quote(),
+        try_help_message()
+    ))
+}
+
+fn invalid_field_range_error() -> NumfmtError {
+    NumfmtError::IllegalArgument(format!("invalid field range\n{}", try_help_message()))
+}
+
+fn fields_numbered_from_one_error() -> NumfmtError {
+    NumfmtError::IllegalArgument(format!(
+        "fields are numbered from 1\n{}",
+        try_help_message()
+    ))
+}
+
+fn invalid_decreasing_range_error() -> NumfmtError {
+    NumfmtError::IllegalArgument(format!("invalid decreasing range\n{}", try_help_message()))
+}
+
+fn field_number_too_large_error(value: &str) -> NumfmtError {
+    NumfmtError::IllegalArgument(format!(
+        "field number {} is too large\n{}",
+        value.quote(),
+        try_help_message()
+    ))
+}
+
+fn missing_fields_error() -> NumfmtError {
+    NumfmtError::IllegalArgument(format!("missing list of fields\n{}", try_help_message()))
+}
+
+fn parse_field_args(
+    values: Option<ValuesRef<'_, String>>,
+) -> std::result::Result<Vec<Range>, NumfmtError> {
+    let mut provided: Vec<&str> = Vec::new();
+
+    if let Some(vals) = values {
+        for val in vals {
+            provided.push(val.as_str());
+        }
+    }
+
+    if provided.len() > 1 {
+        return Err(multiple_field_specifications_error());
+    }
+
+    let spec = provided.get(0).copied().unwrap_or(FIELD_DEFAULT);
+
+    if spec
+        .split(|c| matches!(c, ',' | ' ' | '\t'))
+        .all(|piece| piece.is_empty())
+    {
+        return Err(missing_fields_error());
+    }
+
+    if spec
+        .split(|c| matches!(c, ',' | ' ' | '\t'))
+        .any(|piece| piece == "-")
+    {
+        return Ok(vec![Range {
+            low: 1,
+            high: usize::MAX - 1,
+        }]);
+    }
+
+    Range::from_list(spec).map_err(|message| map_range_error(&message))
+}
+
+fn map_range_error(message: &str) -> NumfmtError {
+    const PREFIX: &str = "range ";
+    const SUFFIX: &str = " was invalid: ";
+
+    if let Some(rest) = message.strip_prefix(PREFIX) {
+        if let Some((value_part, reason)) = rest.split_once(SUFFIX) {
+            let value = value_part.trim_matches('\'');
+            return match reason {
+                "fields and positions are numbered from 1" => fields_numbered_from_one_error(),
+                "high end of range less than low end" => invalid_decreasing_range_error(),
+                "invalid range with no endpoint" => invalid_field_range_error(),
+                "byte/character offset is too large" => field_number_too_large_error(value),
+                "failed to parse range" => {
+                    if value.starts_with('-') && value.len() > 1 {
+                        let remainder = &value[1..];
+                        if remainder
+                            .chars()
+                            .next()
+                            .map(|c| !c.is_ascii_digit())
+                            .unwrap_or(true)
+                            && !remainder.contains('-')
+                        {
+                            return invalid_field_value_error(remainder);
+                        }
+                    }
+                    if value.contains('-') {
+                        invalid_field_range_error()
+                    } else {
+                        invalid_field_value_error(value)
+                    }
+                }
+                _ => NumfmtError::IllegalArgument(message.to_string()),
+            };
+        }
+    }
+
+    NumfmtError::IllegalArgument(message.to_string())
+}
+
+fn parse_options(args: &ArgMatches, raw_delimiter: Option<Vec<u8>>) -> Result<NumfmtOptions> {
     let from = parse_unit(args.get_one::<String>(FROM).unwrap())?;
     let to = parse_unit(args.get_one::<String>(TO).unwrap())?;
     let from_unit = parse_unit_size(args.get_one::<String>(FROM_UNIT).unwrap())?;
@@ -315,16 +527,7 @@ fn parse_options(args: &ArgMatches) -> Result<NumfmtOptions> {
         Ok(0)
     }?;
 
-    let fields = args.get_one::<String>(FIELD).unwrap().as_str();
-    // a lone "-" means "all fields", even as part of a list of fields
-    let fields = if fields.split(&[',', ' ']).any(|x| x == "-") {
-        vec![Range {
-            low: 1,
-            high: usize::MAX,
-        }]
-    } else {
-        Range::from_list(fields)?
-    };
+    let fields = parse_field_args(args.get_many::<String>(FIELD)).map_err(|e| e.to_string())?;
 
     let format = match args.get_one::<String>(FORMAT) {
         Some(s) => s.parse()?,
@@ -343,15 +546,38 @@ fn parse_options(args: &ArgMatches) -> Result<NumfmtOptions> {
         ));
     }
 
-    let delimiter = args.get_one::<String>(DELIMITER).map_or(Ok(None), |arg| {
-        if arg.len() <= 1 {
-            Ok(Some(arg.to_owned()))
+    let delimiter = if let Some(bytes) = raw_delimiter {
+        if bytes.len() == 1 {
+            Ok(Some(DelimiterKind::Bytes(bytes)))
         } else {
             Err(translate!(
                 "numfmt-error-delimiter-must-be-single-character"
             ))
         }
-    })?;
+    } else {
+        args.get_one::<OsString>(DELIMITER).map_or(Ok(None), |arg| {
+            let bytes = os_str_as_bytes(arg.as_os_str())
+                .map_err(|_| translate!("numfmt-error-delimiter-must-be-single-character"))?;
+
+            if bytes.is_empty() {
+                Ok(Some(DelimiterKind::Unicode(String::new())))
+            } else if let Ok(text) = std::str::from_utf8(bytes) {
+                if text.chars().count() == 1 {
+                    Ok(Some(DelimiterKind::Unicode(text.to_string())))
+                } else {
+                    Err(translate!(
+                        "numfmt-error-delimiter-must-be-single-character"
+                    ))
+                }
+            } else if bytes.len() == 1 {
+                Ok(Some(DelimiterKind::Bytes(bytes.to_vec())))
+            } else {
+                Err(translate!(
+                    "numfmt-error-delimiter-must-be-single-character"
+                ))
+            }
+        })
+    }?;
 
     let unit_separator = args.get_one::<String>(UNIT_SEPARATOR).cloned();
 
@@ -401,11 +627,22 @@ fn parse_options(args: &ArgMatches) -> Result<NumfmtOptions> {
 
 #[uucore::main]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
-    let normalized_args = normalize_arguments(args);
-    let matches =
-        uucore::clap_localization::handle_clap_result(uu_app(), normalized_args.into_iter())?;
+    let (normalized_args, raw_delimiter) = normalize_arguments(args);
+    let cmd = uu_app();
+    let matches = match cmd.try_get_matches_from(normalized_args) {
+        Ok(m) => m,
+        Err(e) => {
+            if e.kind() == ErrorKind::UnknownArgument {
+                eprintln!("{}: unrecognized option", uucore::util_name());
+                eprintln!("{}", try_help_message());
+                std::process::exit(1);
+            } else {
+                handle_clap_error_with_exit_code(e, 1);
+            }
+        }
+    };
 
-    let options = parse_options(&matches).map_err(NumfmtError::IllegalArgument)?;
+    let options = parse_options(&matches, raw_delimiter).map_err(NumfmtError::IllegalArgument)?;
     emit_debug_preamble(&options, matches.get_many::<String>(NUMBER).is_some());
 
     let result = match matches.get_many::<String>(NUMBER) {
@@ -442,6 +679,7 @@ pub fn uu_app() -> Command {
                 .short('d')
                 .long(DELIMITER)
                 .value_name("X")
+                .value_parser(OsStringValueParser::new())
                 .help(translate!("numfmt-help-delimiter")),
         )
         .arg(
@@ -450,7 +688,7 @@ pub fn uu_app() -> Command {
                 .help(translate!("numfmt-help-field"))
                 .value_name("FIELDS")
                 .allow_hyphen_values(true)
-                .default_value(FIELD_DEFAULT),
+                .action(ArgAction::Append),
         )
         .arg(
             Arg::new(FORMAT)

@@ -41,6 +41,12 @@ pub struct TransformOptions {
     pub to_unit: usize,
 }
 
+#[derive(Clone)]
+pub enum DelimiterKind {
+    Unicode(String),
+    Bytes(Vec<u8>),
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum InvalidModes {
     Abort,
@@ -54,7 +60,7 @@ pub struct NumfmtOptions {
     pub padding: isize,
     pub header: usize,
     pub fields: Vec<Range>,
-    pub delimiter: Option<String>,
+    pub delimiter: Option<DelimiterKind>,
     pub unit_separator: Option<String>,
     pub round: RoundMethod,
     pub suffix: Option<String>,
