@@ -131,7 +131,9 @@ impl<'a> ErrorFormatter<'a> {
 
     /// Handle help and version display
     fn handle_display_errors(&self, err: &Error) -> ! {
-        print!("{}", err.render());
+        let rendered = format!("{}", err.render());
+        let localized = self.localize_usage_heading(&rendered);
+        print!("{localized}");
         std::process::exit(0);
     }
 
@@ -366,6 +368,34 @@ impl<'a> ErrorFormatter<'a> {
         }
     }
 
+    fn localize_usage_heading(&self, text: &str) -> String {
+        let localized = translate!("common-usage");
+        let use_color = should_use_color_for_stream(&std::io::stdout());
+        let mut result = text.to_string();
+
+        if use_color {
+            let colored_default = "\x1b[1m\x1b[4mUsage:\x1b[0m";
+            let colored_localized = format!("\x1b[1m\x1b[4m{localized}:\x1b[0m");
+
+            if let Some(pos) = result.find(colored_default) {
+                result.replace_range(pos..pos + colored_default.len(), &colored_localized);
+                return result;
+            }
+
+            if let Some(pos) = result.find("Usage:") {
+                result.replace_range(pos..pos + "Usage:".len(), &colored_localized);
+                return result;
+            }
+        } else if localized != "Usage" {
+            if let Some(pos) = result.find("Usage:") {
+                result.replace_range(pos..pos + "Usage:".len(), &format!("{localized}:"));
+                return result;
+            }
+        }
+
+        result
+    }
+
     /// Extract and print clap's built-in tips
     fn print_clap_tips(&self, err: &Error) {
         let rendered_str = err.render().to_string();
@@ -474,13 +504,13 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
-    cmd.try_get_matches_from(itr).map_err(|e| {
-        if e.exit_code() == 0 {
-            e.into() // Preserve help/version
-        } else {
-            handle_clap_error_with_exit_code(e, exit_code)
+    match cmd.try_get_matches_from(itr) {
+        Ok(matches) => Ok(matches),
+        Err(e) => {
+            let code = if e.exit_code() == 0 { 0 } else { exit_code };
+            handle_clap_error_with_exit_code(e, code);
         }
-    })
+    }
 }
 
 /// Handles a clap error directly with a custom exit code.

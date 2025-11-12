@@ -10,7 +10,6 @@ use crate::units::{Result, Unit};
 use clap::{
     Arg, ArgAction, ArgMatches, Command,
     builder::OsStringValueParser,
-    error::ErrorKind,
     parser::{ValueSource, ValuesRef},
 };
 use std::cell::Cell;
@@ -631,15 +630,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let cmd = uu_app();
     let matches = match cmd.try_get_matches_from(normalized_args) {
         Ok(m) => m,
-        Err(e) => {
-            if e.kind() == ErrorKind::UnknownArgument {
-                eprintln!("{}: unrecognized option", uucore::util_name());
-                eprintln!("{}", try_help_message());
-                std::process::exit(1);
-            } else {
-                handle_clap_error_with_exit_code(e, 1);
-            }
-        }
+        Err(e) => handle_clap_error_with_exit_code(e, 1),
     };
 
     let options = parse_options(&matches, raw_delimiter).map_err(NumfmtError::IllegalArgument)?;
@@ -666,9 +657,8 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 }
 
 pub fn uu_app() -> Command {
-    Command::new(uucore::util_name())
+    let cmd = Command::new(uucore::util_name())
         .version(uucore::crate_version!())
-        .help_template(uucore::localized_help_template(uucore::util_name()))
         .about(translate!("numfmt-about"))
         .after_help(translate!("numfmt-after-help"))
         .override_usage(format_usage(&translate!("numfmt-usage")))
@@ -800,7 +790,9 @@ pub fn uu_app() -> Command {
                 .value_name("SEP")
                 .help(translate!("numfmt-help-unit-separator")),
         )
-        .arg(Arg::new(NUMBER).hide(true).action(ArgAction::Append))
+        .arg(Arg::new(NUMBER).hide(true).action(ArgAction::Append));
+
+    uucore::clap_localization::configure_localized_command(cmd)
 }
 
 #[cfg(test)]

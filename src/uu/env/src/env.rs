@@ -32,6 +32,7 @@ use std::io::{self, Write};
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
 
+use uucore::clap_localization::handle_clap_error_with_exit_code;
 use uucore::display::Quotable;
 use uucore::error::{ExitCode, UError, UResult, USimpleError, UUsageError};
 use uucore::line_ending::LineEnding;
@@ -494,24 +495,23 @@ impl EnvAppData {
         let app = uu_app();
         let matches = match app.try_get_matches_from(args) {
             Ok(matches) => matches,
-            Err(e) => {
-                match e.kind() {
-                    clap::error::ErrorKind::DisplayHelp
-                    | clap::error::ErrorKind::DisplayVersion => return Err(e.into()),
-                    _ => {
-                        // Use ErrorFormatter directly to handle error with shebang message callback
-                        let formatter =
-                            uucore::clap_localization::ErrorFormatter::new(uucore::util_name());
-                        formatter.print_error_and_exit_with_callback(&e, 125, || {
-                            eprintln!(
-                                "{}: {}",
-                                uucore::util_name(),
-                                translate!("env-error-use-s-shebang")
-                            );
-                        });
-                    }
+            Err(e) => match e.kind() {
+                clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion => {
+                    handle_clap_error_with_exit_code(e, 0);
                 }
-            }
+                _ => {
+                    // Use ErrorFormatter directly to handle error with shebang message callback
+                    let formatter =
+                        uucore::clap_localization::ErrorFormatter::new(uucore::util_name());
+                    formatter.print_error_and_exit_with_callback(&e, 125, || {
+                        eprintln!(
+                            "{}: {}",
+                            uucore::util_name(),
+                            translate!("env-error-use-s-shebang")
+                        );
+                    });
+                }
+            },
         };
         Ok((original_args, matches))
     }

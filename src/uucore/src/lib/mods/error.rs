@@ -710,6 +710,12 @@ pub trait UClapError<T> {
 
 impl From<clap::Error> for Box<dyn UError> {
     fn from(e: clap::Error) -> Self {
+        if matches!(
+            e.kind(),
+            clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion
+        ) {
+            crate::clap_localization::handle_clap_error_with_exit_code(e, 0);
+        }
         Box::new(ClapErrorWrapper { code: 1, error: e })
     }
 }

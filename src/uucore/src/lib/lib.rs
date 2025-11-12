@@ -274,15 +274,12 @@ pub fn localized_help_template(util_name: &str) -> clap::builder::StyledStr {
 /// This ensures color detection consistency between clap and our template
 pub fn localized_help_template_with_colors(
     util_name: &str,
-    colors_enabled: bool,
+    _colors_enabled: bool,
 ) -> clap::builder::StyledStr {
     use std::fmt::Write;
 
     // Ensure localization is initialized for this utility
     let _ = crate::locale::setup_localization(util_name);
-
-    // Get the localized "Usage" label
-    let usage_label = crate::locale::translate!("common-usage");
 
     // Create a styled template
     let mut template = clap::builder::StyledStr::new();
@@ -290,19 +287,8 @@ pub fn localized_help_template_with_colors(
     // Add the basic template parts
     writeln!(template, "{{before-help}}{{about-with-newline}}").unwrap();
 
-    // Add styled usage header (bold + underline like clap's default)
-    if colors_enabled {
-        write!(
-            template,
-            "\x1b[1m\x1b[4m{usage_label}:\x1b[0m {{usage}}\n\n"
-        )
-        .unwrap();
-    } else {
-        write!(template, "{usage_label}: {{usage}}\n\n").unwrap();
-    }
-
-    // Add the rest
-    write!(template, "{{all-args}}{{after-help}}").unwrap();
+    // Match clap's default template so we inherit its styling logic
+    template.push_str("{usage-heading} {usage}\n\n{all-args}{after-help}");
 
     template
 }
