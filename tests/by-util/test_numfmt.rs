@@ -6,6 +6,8 @@
 
 use uutests::new_ucmd;
 
+const NBSP: &str = "\u{00A0}";
+
 #[test]
 fn test_invalid_arg() {
     new_ucmd!().arg("--definitely-invalid").fails_with_code(1);
@@ -761,6 +763,43 @@ fn test_unit_separator_empty_disables_blank_matching() {
         .args(&["-d", "", "--from=si", "--unit-separator", "", "1 K"])
         .fails()
         .stderr_is("numfmt: invalid suffix in input: '1 K'\n");
+}
+
+#[test]
+fn test_unit_separator_nbsp_on_input() {
+    let nbsp_arg = NBSP.to_string();
+    let value = format!("4{NBSP}K");
+
+    new_ucmd!()
+        .args(&["--from=iec", "--unit-separator", &nbsp_arg, &value])
+        .succeeds()
+        .stdout_is("4096\n");
+}
+
+#[test]
+fn test_unit_separator_multi_char_separator_on_output() {
+    new_ucmd!()
+        .args(&["--to=iec", "--unit-separator", "::", "2048"])
+        .succeeds()
+        .stdout_is("2.0::K\n");
+}
+
+#[test]
+fn test_unit_separator_multi_char_separator_on_input() {
+    new_ucmd!()
+        .args(&["--from=iec", "--unit-separator", "::", "4::K"])
+        .succeeds()
+        .stdout_is("4096\n");
+}
+
+#[test]
+fn test_unit_separator_field_delimiter_precedence() {
+    let input = "1 K_Field2".to_string();
+
+    new_ucmd!()
+        .args(&["--from=si", "--unit-separator", " ", &input])
+        .succeeds()
+        .stdout_is(format!("{input}\n"));
 }
 
 #[test]
