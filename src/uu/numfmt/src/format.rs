@@ -187,11 +187,13 @@ fn parse_locale_numeric_prefix(s: &str, locale: &NumericLocale) -> Option<(usize
     let mut allow_sign = true;
 
     while consumed < len {
-        if !locale.grouping_sep().is_empty() && !seen_decimal && !seen_exp {
-            if s[consumed..].starts_with(locale.grouping_sep()) {
-                consumed += locale.grouping_sep().len();
-                continue;
-            }
+        if !locale.grouping_sep().is_empty()
+            && !seen_decimal
+            && !seen_exp
+            && s[consumed..].starts_with(locale.grouping_sep())
+        {
+            consumed += locale.grouping_sep().len();
+            continue;
         }
 
         let current = s[consumed..].chars().next().unwrap();
@@ -228,9 +230,8 @@ fn parse_locale_numeric_prefix(s: &str, locale: &NumericLocale) -> Option<(usize
                 seen_exp = true;
                 allow_sign = true;
                 continue;
-            } else {
-                break;
             }
+            break;
         }
 
         if seen_exp && allow_sign && matches!(current, '+' | '-') {
