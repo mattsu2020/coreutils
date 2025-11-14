@@ -14,6 +14,24 @@ fn test_invalid_arg() {
 }
 
 #[test]
+fn test_value_too_large_without_to() {
+    new_ucmd!()
+        .arg("10000000000000000000")
+        .fails_with_code(2)
+        .stderr_is("numfmt: value too large to be printed: '1e+19' (consider using --to)\n");
+}
+
+#[test]
+fn test_value_precision_too_large_without_to() {
+    new_ucmd!()
+        .arg("1000000000000000000.0")
+        .fails_with_code(2)
+        .stderr_is(
+            "numfmt: value/precision too large to be printed: '1e+18/1' (consider using --to)\n",
+        );
+}
+
+#[test]
 fn test_should_not_round_floats() {
     new_ucmd!()
         .args(&["0.99", "1.01", "1.1", "1.22", ".1", "-0.1"])
@@ -52,6 +70,14 @@ fn test_from_si_supports_ronna_and_quetta() {
         .args(&["--from=si", "--to=si", "1R", "1Q"])
         .succeeds()
         .stdout_is("1.0R\n1.0Q\n");
+}
+
+#[test]
+fn test_from_si_large_value_requires_scaling() {
+    new_ucmd!()
+        .args(&["--from=si", "40E"])
+        .fails_with_code(2)
+        .stderr_is("numfmt: value too large to be printed: '4e+19' (consider using --to)\n");
 }
 
 #[test]
@@ -125,6 +151,26 @@ fn test_to_si_supports_ronna_and_quetta() {
         .args(&["--to=si", "999600000000000000000000000000"])
         .succeeds()
         .stdout_is("1.0Q\n");
+}
+
+#[test]
+fn test_to_si_value_too_large_to_convert() {
+    new_ucmd!()
+        .args(&["--to=si", "6543219876543210000000000000000000"])
+        .fails_with_code(2)
+        .stderr_is(
+            "numfmt: value too large to be converted: '6543219876543210000000000000000000'\n",
+        );
+}
+
+#[test]
+fn test_to_si_exceeds_supported_suffix_range() {
+    new_ucmd!()
+        .args(&["--from=si", "--to=si", "1000Q"])
+        .fails_with_code(2)
+        .stderr_is(
+            "numfmt: value too large to be printed: '1e+33' (cannot handle values > 999Q)\n",
+        );
 }
 
 #[test]
@@ -996,6 +1042,14 @@ fn test_from_unit() {
         .args(&["--from-unit=512", "4"])
         .succeeds()
         .stdout_is("2048\n");
+}
+
+#[test]
+fn test_from_unit_value_requires_scaling() {
+    new_ucmd!()
+        .args(&["--from=si", "--from-unit=1000000", "9P"])
+        .fails_with_code(2)
+        .stderr_is("numfmt: value too large to be printed: '9e+21' (consider using --to)\n");
 }
 
 #[test]

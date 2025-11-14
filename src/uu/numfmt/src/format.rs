@@ -11,6 +11,10 @@ use crate::locale::NumericLocale;
 use crate::options::{DelimiterKind, InvalidModes, NumfmtOptions, RoundMethod, TransformOptions};
 use crate::units::{DisplayableSuffix, IEC_BASES, RawSuffix, Result, SI_BASES, Suffix, Unit};
 
+const MAX_UNSCALED_LOG10: f64 = 19.0;
+const MAX_SI_MAGNITUDE: f64 = SI_BASES[SI_BASES.len() - 1];
+const MAX_IEC_MAGNITUDE: f64 = IEC_BASES[IEC_BASES.len() - 1];
+
 /// Iterate over a line's fields, where each field is a contiguous sequence of
 /// non-whitespace, optionally prefixed with one or more characters of leading
 /// whitespace. Fields are returned as tuples of `(prefix, field)`.
@@ -653,6 +657,10 @@ fn transform_to(
 ) -> Result<String> {
     let (i2, s) = consider_suffix(s, &opts.to, round_method, precision)?;
     let i2 = i2 / (opts.to_unit as f64);
+
+    if matches!(opts.to, Unit::None) {
+        ensure_unscaled_output_within_limit(i2, precision)?;
+    }
     let separator = unit_separator.unwrap_or("");
     Ok(match s {
         None => {
@@ -695,13 +703,17 @@ fn format_string(
 
     let unit_separator = options.unit_separator.as_deref();
 
+    let transformed = transform_from(
+        source_without_suffix,
+        &options.transform,
+        unit_separator,
+        &options.numeric_locale,
+    )?;
+
+    ensure_to_value_supported(source, transformed, options)?;
+
     let number = transform_to(
-        transform_from(
-            source_without_suffix,
-            &options.transform,
-            unit_separator,
-            &options.numeric_locale,
-        )?,
+        transformed,
         &options.transform,
         options.round,
         precision,
@@ -1042,6 +1054,69 @@ pub fn format_and_print(s: &str, options: &NumfmtOptions) -> Result<()> {
             format_and_print_byte_delimited_streaming(s, bytes[0], options)
         }
         (false, None) => format_and_print_whitespace_streaming(s, options),
+    }
+}
+
+fn scientific_notation(value: f64) -> String {
+    let mut formatted = format!("{value:.0e}");
+    if let Some(pos) = formatted.find('e') {
+        if pos + 1 == formatted.len() || !matches!(formatted.as_bytes()[pos + 1], b'+' | b'-') {
+            formatted.insert(pos + 1, '+');
+        }
+    }
+    formatted
+}
+
+fn ensure_unscaled_output_within_limit(value: f64, precision: usize) -> Result<()> {
+    let abs_value = value.abs();
+    if abs_value == 0.0 {
+        return Ok(());
+    }
+
+    let log_value = abs_value.log10();
+    if log_value >= MAX_UNSCALED_LOG10 {
+        return Err(translate!(
+            "numfmt-error-value-too-large-to-print",
+            "value" => scientific_notation(value).quote()
+        ));
+    }
+
+    if precision > 0 && log_value + (precision as f64) >= MAX_UNSCALED_LOG10 {
+        let combined = format!("{}/{}", scientific_notation(value), precision);
+        return Err(translate!(
+            "numfmt-error-value-precision-too-large-to-print",
+            "value_precision" => combined.quote()
+        ));
+    }
+
+    Ok(())
+}
+
+fn ensure_to_value_supported(
+    original_input: &str,
+    value: f64,
+    options: &NumfmtOptions,
+) -> Result<()> {
+    let limit = match options.transform.to {
+        Unit::None => return Ok(()),
+        Unit::Si | Unit::Auto => MAX_SI_MAGNITUDE,
+        Unit::Iec(_) => MAX_IEC_MAGNITUDE,
+    };
+
+    if value.abs() < limit {
+        return Ok(());
+    }
+
+    if matches!(options.transform.from, Unit::None) && options.transform.from_unit == 1 {
+        Err(translate!(
+            "numfmt-error-value-too-large-to-convert",
+            "value" => original_input.quote()
+        ))
+    } else {
+        Err(translate!(
+            "numfmt-error-value-too-large-to-print-suffix",
+            "value" => scientific_notation(value).quote()
+        ))
     }
 }
 
