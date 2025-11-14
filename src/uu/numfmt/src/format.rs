@@ -660,7 +660,7 @@ fn transform_to(
     let i2 = i2 / (opts.to_unit as f64);
 
     if matches!(opts.to, Unit::None) {
-        ensure_unscaled_output_within_limit(i2, precision)?;
+        ensure_unscaled_output_within_limit(i2, precision, unscaled_limit_log10(opts))?;
     }
     let separator = unit_separator.unwrap_or("");
     Ok(match s {
@@ -1068,21 +1068,32 @@ fn scientific_notation(value: f64) -> String {
     formatted
 }
 
-fn ensure_unscaled_output_within_limit(value: f64, precision: usize) -> Result<()> {
+fn unscaled_limit_log10(opts: &TransformOptions) -> f64 {
+    match opts.from {
+        Unit::Iec(_) => MAX_IEC_MAGNITUDE.log10(),
+        _ => MAX_UNSCALED_LOG10,
+    }
+}
+
+fn ensure_unscaled_output_within_limit(
+    value: f64,
+    precision: usize,
+    limit_log10: f64,
+) -> Result<()> {
     let abs_value = value.abs();
     if abs_value == 0.0 {
         return Ok(());
     }
 
     let log_value = abs_value.log10();
-    if log_value >= MAX_UNSCALED_LOG10 {
+    if log_value >= limit_log10 {
         return Err(translate!(
             "numfmt-error-value-too-large-to-print",
             "value" => scientific_notation(value).quote()
         ));
     }
 
-    if precision > 0 && log_value + (precision as f64) >= MAX_UNSCALED_LOG10 {
+    if precision > 0 && log_value + (precision as f64) >= limit_log10 {
         let combined = format!("{}/{}", scientific_notation(value), precision);
         return Err(translate!(
             "numfmt-error-value-precision-too-large-to-print",
