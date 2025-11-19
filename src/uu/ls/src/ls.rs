@@ -1865,6 +1865,7 @@ struct PathData {
     p_buf: PathBuf,
     must_dereference: bool,
     command_line: bool,
+    link_target: OnceCell<Option<PathBuf>>,
 }
 
 impl PathData {
@@ -1910,6 +1911,7 @@ impl PathData {
         let ft: OnceCell<Option<FileType>> = OnceCell::new();
         let md: OnceCell<Option<Metadata>> = OnceCell::new();
         let security_context: OnceCell<Box<str>> = OnceCell::new();
+        let link_target: OnceCell<Option<PathBuf>> = OnceCell::new();
 
         let de: RefCell<Option<Box<DirEntry>>> = if let Some(de) = dir_entry {
             if must_dereference {
@@ -1921,6 +1923,9 @@ impl PathData {
 
             if let Ok(ft_de) = de.file_type() {
                 ft.get_or_init(|| Some(ft_de));
+                if ft_de.is_symlink() {
+                    let _ = link_target.get_or_init(|| p_buf.read_link().ok());
+                }
             }
 
             RefCell::new(Some(de.into()))
@@ -1937,6 +1942,7 @@ impl PathData {
             p_buf,
             must_dereference,
             command_line,
+            link_target,
         }
     }
 
@@ -3245,7 +3251,14 @@ fn display_item_name(
         && path.file_type().is_some_and(|ft| ft.is_symlink())
         && !path.must_dereference
     {
-        match path.path().read_link() {
+        let read_link_result = path
+            .link_target
+            .get()
+            .and_then(|opt| opt.as_ref())
+            .map(|p| Ok(p.clone()))
+            .unwrap_or_else(|| path.path().read_link());
+
+        match read_link_result {
             Ok(target_path) => {
                 name.push(" -> ");
 
