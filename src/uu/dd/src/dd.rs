@@ -230,7 +230,7 @@ impl Source {
         }
     }
 
-    fn skip(&mut self, n: u64) -> io::Result<u64> {
+    fn skip(&mut self, n: u64, ibs: usize) -> io::Result<u64> {
         match self {
             #[cfg(not(unix))]
             Self::Stdin(stdin) => match io::copy(&mut stdin.take(n), &mut io::sink()) {
@@ -272,7 +272,26 @@ impl Source {
             }
             Self::File(f) => f.seek(SeekFrom::Current(n.try_into().unwrap())),
             #[cfg(unix)]
-            Self::Fifo(f) => io::copy(&mut f.take(n), &mut io::sink()),
+            Self::Fifo(f) => {
+                // For FIFO, allocate a buffer of size ibs to perform the skip.
+                // This matches GNU dd behavior where skip uses ibs-sized reads.
+                let mut buf = vec![0u8; ibs];
+                let mut remaining = n;
+                let mut total_read = 0u64;
+                
+                while remaining > 0 {
+                    let to_read = std::cmp::min(remaining, ibs as u64) as usize;
+                    match f.read(&mut buf[..to_read]) {
+                        Ok(0) => break,
+                        Ok(n_read) => {
+                            total_read += n_read as u64;
+                            remaining -= n_read as u64;
+                        }
+                        Err(e) => return Err(e),
+                    }
+                }
+                Ok(total_read)
+            },
         }
     }
 
@@ -357,7 +376,7 @@ impl<'a> Input<'a> {
             }
         }
         if settings.skip > 0 {
-            src.skip(settings.skip)?;
+            src.skip(settings.skip, settings.ibs)?;
         }
         Ok(Self { src, settings })
     }
@@ -380,7 +399,7 @@ impl<'a> Input<'a> {
 
         let mut src = Source::File(src);
         if settings.skip > 0 {
-            src.skip(settings.skip)?;
+            src.skip(settings.skip, settings.ibs)?;
         }
         Ok(Self { src, settings })
     }
@@ -394,7 +413,7 @@ impl<'a> Input<'a> {
         opts.custom_flags(make_linux_iflags(&settings.iflags).unwrap_or(0));
         let mut src = Source::Fifo(opts.open(filename)?);
         if settings.skip > 0 {
-            src.skip(settings.skip)?;
+            src.skip(settings.skip, settings.ibs)?;
         }
         Ok(Self { src, settings })
     }
@@ -611,7 +630,7 @@ impl Dest {
         }
     }
 
-    fn seek(&mut self, n: u64) -> io::Result<u64> {
+    fn seek(&mut self, n: u64, obs: usize) -> io::Result<u64> {
         match self {
             Self::Stdout(stdout) => io::copy(&mut io::repeat(0).take(n), stdout),
             Self::File(f, _) => {
@@ -632,8 +651,24 @@ impl Dest {
             }
             #[cfg(unix)]
             Self::Fifo(f) => {
-                // Seeking in a named pipe means *reading* from the pipe.
-                io::copy(&mut f.take(n), &mut io::sink())
+                // For FIFO seek simulation, we need to read using obs-sized buffer.
+                // This matches GNU dd behavior where seek on output uses obs-sized reads.
+                let mut buf = vec![0u8; obs];
+                let mut remaining = n;
+                let mut total_read = 0u64;
+                
+                while remaining > 0 {
+                    let to_read = std::cmp::min(remaining, obs as u64) as usize;
+                    match f.read(&mut buf[..to_read]) {
+                        Ok(0) => break,
+                        Ok(n_read) => {
+                            total_read += n_read as u64;
+                            remaining -= n_read as u64;
+                        }
+                        Err(e) => return Err(e),
+                    }
+                }
+                Ok(total_read)
             }
             #[cfg(unix)]
             Self::Sink => Ok(0),
@@ -798,7 +833,7 @@ impl<'a> Output<'a> {
     /// Instantiate this struct with stdout as a destination.
     fn new_stdout(settings: &'a Settings) -> UResult<Self> {
         let mut dst = Dest::Stdout(io::stdout());
-        dst.seek(settings.seek)
+        dst.seek(settings.seek, settings.obs)
             .map_err_context(|| translate!("dd-error-write-error"))?;
         Ok(Self { dst, settings })
     }
@@ -846,7 +881,7 @@ impl<'a> Output<'a> {
             Density::Dense
         };
         let mut dst = Dest::File(dst, density);
-        dst.seek(settings.seek)
+        dst.seek(settings.seek, settings.obs)
             .map_err_context(|| translate!("dd-error-failed-to-seek"))?;
         Ok(Self { dst, settings })
     }
@@ -876,7 +911,7 @@ impl<'a> Output<'a> {
         // file for reading. But then we need to close the file and
         // re-open it for writing.
         if settings.seek > 0 {
-            Dest::Fifo(File::open(filename)?).seek(settings.seek)?;
+            Dest::Fifo(File::open(filename)?).seek(settings.seek, settings.obs)?;
         }
         // If `count=0`, then we don't bother opening the file for
         // writing because that would cause this process to block

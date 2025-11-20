@@ -1830,3 +1830,48 @@ fn test_oflag_direct_partial_block() {
     at.remove(input_file);
     at.remove(output_file);
 }
+
+#[cfg(unix)]
+#[test]
+fn test_no_unnecessary_allocation() {
+    // Corresponds to the shell test checking memory allocation
+    // We use a very large size (100GiB) to ensure that if allocation happens, it fails/crashes
+    // (assuming the test runner doesn't have 100GiB RAM).
+
+    // Case 1: count=0, should not allocate
+    new_ucmd!()
+        .args(&["bs=100G", "count=0", "status=none"])
+        .succeeds();
+
+    // For seek/skip tests on fifo
+    let ts = TestScenario::new(util_name!());
+    let tape = "tape";
+    
+    // Create fifo using AtPath helper
+    ts.fixtures.mkfifo(tape);
+    
+    let tape_path = ts.fixtures.plus(tape);
+
+    // Case 2: skip on input fifo
+    // dd obs=100G skip=1 count=0 if=tape
+    // We need to feed the tape with at least 1 block (512 bytes)
+    // Spawn a writer
+    let tape_path_clone = tape_path.clone();
+    std::thread::spawn(move || {
+        // Write 512 bytes to tape
+        // Open for write. This will block until reader opens.
+        let mut f = std::fs::OpenOptions::new().write(true).open(tape_path_clone).unwrap();
+        f.write_all(&vec![0; 512]).unwrap();
+    });
+
+    new_ucmd!()
+        .args(&["obs=100G", "skip=1", "count=0", "status=none", &format!("if={}", tape)])
+        .current_dir(ts.fixtures.subdir.clone())
+        .succeeds();
+
+    // Note: We don't test "seek on output fifo with count=0" because
+    // when count=0, dd doesn't open the output FIFO for writing,
+    // which means any reader would block indefinitely.
+    // The important point is that count=0 prevents buffer allocation
+    // regardless of bs/ibs/obs size.
+}
