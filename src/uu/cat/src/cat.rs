@@ -575,7 +575,7 @@ fn write_lines<R: FdReadable>(
             }
 
             // print to end of line or end of buffer
-            let offset = write_end(&mut writer, &in_buf[pos..], options);
+            let offset = write_end(&mut writer, &in_buf[pos..], options)?;
 
             // end of buffer?
             if offset + pos == in_buf.len() {
@@ -638,7 +638,7 @@ fn write_new_line<W: Write>(
     Ok(())
 }
 
-fn write_end<W: Write>(writer: &mut W, in_buf: &[u8], options: &OutputOptions) -> usize {
+fn write_end<W: Write>(writer: &mut W, in_buf: &[u8], options: &OutputOptions) -> io::Result<usize> {
     if options.show_nonprint {
         write_nonprint_to_end(in_buf, writer, options.tab().as_bytes())
     } else if options.show_tabs {
@@ -654,21 +654,21 @@ fn write_end<W: Write>(writer: &mut W, in_buf: &[u8], options: &OutputOptions) -
 // however, write_nonprint_to_end doesn't need to stop at \r because it will always write \r as ^M.
 // Return the number of written symbols
 
-fn write_to_end<W: Write>(in_buf: &[u8], writer: &mut W) -> usize {
+fn write_to_end<W: Write>(in_buf: &[u8], writer: &mut W) -> io::Result<usize> {
     // using memchr2 significantly improves performances
     match memchr2(b'\n', b'\r', in_buf) {
         Some(p) => {
-            writer.write_all(&in_buf[..p]).unwrap();
-            p
+            writer.write_all(&in_buf[..p])?;
+            Ok(p)
         }
         None => {
-            writer.write_all(in_buf).unwrap();
-            in_buf.len()
+            writer.write_all(in_buf)?;
+            Ok(in_buf.len())
         }
     }
 }
 
-fn write_tab_to_end<W: Write>(mut in_buf: &[u8], writer: &mut W) -> usize {
+fn write_tab_to_end<W: Write>(mut in_buf: &[u8], writer: &mut W) -> io::Result<usize> {
     let mut count = 0;
     loop {
         match in_buf
@@ -676,25 +676,25 @@ fn write_tab_to_end<W: Write>(mut in_buf: &[u8], writer: &mut W) -> usize {
             .position(|c| *c == b'\n' || *c == b'\t' || *c == b'\r')
         {
             Some(p) => {
-                writer.write_all(&in_buf[..p]).unwrap();
+                writer.write_all(&in_buf[..p])?;
                 if in_buf[p] == b'\t' {
-                    writer.write_all(b"^I").unwrap();
+                    writer.write_all(b"^I")?;
                     in_buf = &in_buf[p + 1..];
                     count += p + 1;
                 } else {
                     // b'\n' or b'\r'
-                    return count + p;
+                    return Ok(count + p);
                 }
             }
             None => {
-                writer.write_all(in_buf).unwrap();
-                return in_buf.len() + count;
+                writer.write_all(in_buf)?;
+                return Ok(in_buf.len() + count);
             }
         }
     }
 }
 
-fn write_nonprint_to_end<W: Write>(in_buf: &[u8], writer: &mut W, tab: &[u8]) -> usize {
+fn write_nonprint_to_end<W: Write>(in_buf: &[u8], writer: &mut W, tab: &[u8]) -> io::Result<usize> {
     let mut count = 0;
 
     for byte in in_buf.iter().copied() {
@@ -702,18 +702,17 @@ fn write_nonprint_to_end<W: Write>(in_buf: &[u8], writer: &mut W, tab: &[u8]) ->
             break;
         }
         match byte {
-            9 => writer.write_all(tab),
-            0..=8 | 10..=31 => writer.write_all(&[b'^', byte + 64]),
-            32..=126 => writer.write_all(&[byte]),
-            127 => writer.write_all(b"^?"),
-            128..=159 => writer.write_all(&[b'M', b'-', b'^', byte - 64]),
-            160..=254 => writer.write_all(&[b'M', b'-', byte - 128]),
-            _ => writer.write_all(b"M-^?"),
+            9 => writer.write_all(tab)?,
+            0..=8 | 10..=31 => writer.write_all(&[b'^', byte + 64])?,
+            32..=126 => writer.write_all(&[byte])?,
+            127 => writer.write_all(b"^?")?,
+            128..=159 => writer.write_all(&[b'M', b'-', b'^', byte - 64])?,
+            160..=254 => writer.write_all(&[b'M', b'-', byte - 128])?,
+            _ => writer.write_all(b"M-^?")?,
         }
-        .unwrap();
         count += 1;
     }
-    count
+    Ok(count)
 }
 
 fn write_end_of_line<W: Write>(
@@ -743,14 +742,14 @@ mod tests {
     fn test_write_tab_to_end_with_newline() {
         let mut writer = BufWriter::with_capacity(1024 * 64, stdout());
         let in_buf = b"a\tb\tc\n";
-        assert_eq!(super::write_tab_to_end(in_buf, &mut writer), 5);
+        assert_eq!(super::write_tab_to_end(in_buf, &mut writer).unwrap(), 5);
     }
 
     #[test]
     fn test_write_tab_to_end_no_newline() {
         let mut writer = BufWriter::with_capacity(1024 * 64, stdout());
         let in_buf = b"a\tb\tc";
-        assert_eq!(super::write_tab_to_end(in_buf, &mut writer), 5);
+        assert_eq!(super::write_tab_to_end(in_buf, &mut writer).unwrap(), 5);
     }
 
     #[test]
@@ -758,7 +757,7 @@ mod tests {
         let mut writer = BufWriter::with_capacity(1024 * 64, stdout());
         let in_buf = b"\n";
         let tab = b"";
-        super::write_nonprint_to_end(in_buf, &mut writer, tab);
+        super::write_nonprint_to_end(in_buf, &mut writer, tab).unwrap();
         assert_eq!(writer.buffer().len(), 0);
     }
 
@@ -767,7 +766,7 @@ mod tests {
         let mut writer = BufWriter::with_capacity(1024 * 64, stdout());
         let in_buf = &[9u8];
         let tab = b"tab";
-        super::write_nonprint_to_end(in_buf, &mut writer, tab);
+        super::write_nonprint_to_end(in_buf, &mut writer, tab).unwrap();
         assert_eq!(writer.buffer(), tab);
     }
 
@@ -777,7 +776,7 @@ mod tests {
             let mut writer = BufWriter::with_capacity(1024 * 64, stdout());
             let in_buf = &[byte];
             let tab = b"";
-            super::write_nonprint_to_end(in_buf, &mut writer, tab);
+            super::write_nonprint_to_end(in_buf, &mut writer, tab).unwrap();
             assert_eq!(writer.buffer(), [b'^', byte + 64]);
         }
     }
@@ -788,7 +787,7 @@ mod tests {
             let mut writer = BufWriter::with_capacity(1024 * 64, stdout());
             let in_buf = &[byte];
             let tab = b"";
-            super::write_nonprint_to_end(in_buf, &mut writer, tab);
+            super::write_nonprint_to_end(in_buf, &mut writer, tab).unwrap();
             assert_eq!(writer.buffer(), [b'^', byte + 64]);
         }
     }
