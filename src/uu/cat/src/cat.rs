@@ -638,7 +638,11 @@ fn write_new_line<W: Write>(
     Ok(())
 }
 
-fn write_end<W: Write>(writer: &mut W, in_buf: &[u8], options: &OutputOptions) -> io::Result<usize> {
+fn write_end<W: Write>(
+    writer: &mut W,
+    in_buf: &[u8],
+    options: &OutputOptions,
+) -> io::Result<usize> {
     if options.show_nonprint {
         write_nonprint_to_end(in_buf, writer, options.tab().as_bytes())
     } else if options.show_tabs {
