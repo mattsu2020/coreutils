@@ -84,10 +84,7 @@ fn show_removal_error(error: std::io::Error, path: &Path) -> bool {
 /// Helper function for permission denied errors
 fn show_permission_denied_error(path: &Path) -> bool {
     // Best-effort: mention "directory" when we know the target is one.
-    let is_dir = path
-        .symlink_metadata()
-        .map(|m| m.is_dir())
-        .unwrap_or(false);
+    let is_dir = path.symlink_metadata().map(|m| m.is_dir()).unwrap_or(false);
 
     if is_dir {
         show_error!(
