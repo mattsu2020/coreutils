@@ -586,6 +586,23 @@ fn is_readonly_dir(path: &Path) -> io::Result<bool> {
     Ok(fs::metadata(path)?.file_attributes() & FILE_ATTRIBUTE_READONLY != 0)
 }
 
+/// Whether the given file or directory is executable.
+#[cfg(unix)]
+fn is_executable(path: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let bytes = path.as_os_str().as_bytes();
+    if let Ok(c_string) = std::ffi::CString::new(bytes) {
+        unsafe { libc::access(c_string.as_ptr(), libc::X_OK) == 0 }
+    } else {
+        false
+    }
+}
+
+#[cfg(not(unix))]
+fn is_executable(_path: &Path) -> bool {
+    true
+}
+
 /// Recursively remove the directory tree rooted at the given path.
 ///
 /// If `path` is a file or a symbolic link, just remove it. If it is a
@@ -650,6 +667,12 @@ fn remove_dir_recursive(
         }
 
         // Recursive case: this is a directory.
+        #[cfg(unix)]
+        if !is_executable(path) {
+            show_permission_denied_error(path);
+            return true;
+        }
+
         let mut error = false;
         match fs::read_dir(path) {
             Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {

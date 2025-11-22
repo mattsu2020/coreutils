@@ -1272,3 +1272,45 @@ fn test_progress_no_output_on_error() {
         .stderr_contains("cannot remove")
         .stderr_contains("No such file or directory");
 }
+
+#[test]
+#[cfg(unix)]
+fn test_rm_permission_denied_traversal() {
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    // mkdir -p a/0
+    at.mkdir_all("a/0");
+    // mkdir -p a/1/2 b/3
+    at.mkdir_all("a/1/2");
+    at.mkdir_all("b/3");
+    // mkdir a/2 a/3
+    at.mkdir("a/2");
+    at.mkdir("a/3");
+
+    // chmod u-x a/1 b
+    at.set_mode("a/1", 0o600);
+    at.set_mode("b", 0o600);
+
+    let result = ucmd.arg("-rf").arg("a").arg("b").run();
+
+    assert!(!result.succeeded());
+
+    let stderr = result.stderr_str();
+
+    assert!(stderr.contains("rm: cannot remove 'a/1': Permission denied"));
+    assert!(stderr.contains("rm: cannot remove 'b': Permission denied"));
+
+    // test -d a/0 && fail=1 -> a/0 should be gone
+    assert!(!at.dir_exists("a/0"));
+    // test -d a/1 || fail=1 -> a/1 should exist
+    assert!(at.dir_exists("a/1"));
+    // test -d a/2 && fail=1 -> a/2 should be gone
+    assert!(!at.dir_exists("a/2"));
+    // test -d a/3 && fail=1 -> a/3 should be gone
+    assert!(!at.dir_exists("a/3"));
+
+    // chmod u+x b
+    at.set_mode("b", 0o700);
+    // test -d b/3 || fail=1 -> b/3 should exist
+    assert!(at.dir_exists("b/3"));
+}
