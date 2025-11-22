@@ -602,6 +602,35 @@ fn test_prompts() {
     assert!(!at.dir_exists("a"));
 }
 
+#[cfg(unix)]
+#[test]
+fn test_rm_permission_denied_child_dir() {
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    // 構成: b/a/p (a は書き込み不可), b/c, b/d
+    at.mkdir_all("b/a/p");
+    at.mkdir_all("b/c");
+    at.mkdir_all("b/d");
+    // chmod ug-w b/a 相当: 書き込みを外して子ディレクトリ削除を阻止
+    at.set_mode("b/a", 0o555);
+
+    let result = ucmd.arg("-rf").arg("b").run();
+    assert!(!result.succeeded());
+
+    let stderr = result.stderr_str();
+    let expected1 = "rm: cannot remove directory 'b/a/p': Permission denied\n";
+    let expected2 = "rm: cannot remove 'b/a/p': Permission denied\n";
+    assert!(
+        stderr == expected1 || stderr == expected2,
+        "unexpected stderr:\n{stderr}"
+    );
+
+    // b/a/p は残り、兄弟ディレクトリ b/c と b/d は削除されていること
+    assert!(at.dir_exists("b/a/p"));
+    assert!(!at.dir_exists("b/c"));
+    assert!(!at.dir_exists("b/d"));
+}
+
 #[cfg(feature = "chmod")]
 #[test]
 fn test_prompts_no_tty() {
@@ -1104,17 +1133,32 @@ fn test_rm_directory_not_executable() {
     // Try to remove both directories recursively - this should fail
     let result = scene.ucmd().args(&["-rf", "a", "b"]).fails();
 
-    // Check for expected error messages
-    // When directories don't have execute permission, we get "Permission denied"
-    // when trying to access subdirectories
+    // GNU tests accept two possible stderr variants (Linux vs. Solaris).
+    // Accept both, and be tolerant to the optional "directory " wording
+    // that our implementation may emit.
     let stderr = result.stderr_str();
+    let stderr_lines: Vec<&str> = stderr.lines().collect();
+    let allowed = [
+        vec![
+            "rm: cannot remove 'a/1': Permission denied",
+            "rm: cannot remove 'b': Permission denied",
+        ],
+        vec![
+            "rm: cannot remove 'a/1/2': Permission denied",
+            "rm: cannot remove 'b/3': Permission denied",
+        ],
+        vec![
+            "rm: cannot remove directory 'a/1': Permission denied",
+            "rm: cannot remove directory 'b': Permission denied",
+        ],
+        vec![
+            "rm: cannot remove directory 'a/1/2': Permission denied",
+            "rm: cannot remove directory 'b/3': Permission denied",
+        ],
+    ];
     assert!(
-        stderr.contains("rm: cannot remove directory 'a/1/2': Permission denied")
-            || stderr.contains("rm: cannot remove 'a/1/2': Permission denied")
-    );
-    assert!(
-        stderr.contains("rm: cannot remove directory 'b/3': Permission denied")
-            || stderr.contains("rm: cannot remove 'b/3': Permission denied")
+        allowed.iter().any(|expected| *expected == stderr_lines),
+        "unexpected stderr:\n{stderr}"
     );
 
     // Check which directories still exist
