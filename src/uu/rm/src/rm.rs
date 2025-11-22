@@ -89,7 +89,15 @@ fn show_permission_denied_error(path: &Path) -> bool {
         .map(|md| md.is_dir() && !is_symlink_dir(&md))
         .unwrap_or(false);
 
-    if is_directory {
+    // Only add the word "directory" when we have execute/search permission on
+    // the directory. When execute is missing (e.g., chmod 600 dir), GNU rm
+    // prints the generic wording without "directory".
+    #[cfg(unix)]
+    let add_directory = is_directory && is_executable(path);
+    #[cfg(not(unix))]
+    let add_directory = is_directory;
+
+    if add_directory {
         show_error!(
             "cannot remove directory {}: Permission denied",
             path.quote()
