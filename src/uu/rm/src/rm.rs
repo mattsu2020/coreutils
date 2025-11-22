@@ -578,6 +578,14 @@ fn is_writable(_path: &Path) -> bool {
     true
 }
 
+#[cfg(windows)]
+fn is_readonly_dir(path: &Path) -> io::Result<bool> {
+    use std::os::windows::prelude::MetadataExt;
+    use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_READONLY;
+
+    Ok(fs::metadata(path)?.file_attributes() & FILE_ATTRIBUTE_READONLY != 0)
+}
+
 /// Recursively remove the directory tree rooted at the given path.
 ///
 /// If `path` is a file or a symbolic link, just remove it. If it is a
@@ -630,6 +638,15 @@ fn remove_dir_recursive(
                     }
                 }
             }
+        }
+
+        // On Windows, a directory marked read-only should behave like a
+        // write-protected directory on Unix: refuse removal and report
+        // a permission error instead of silently deleting it.
+        #[cfg(windows)]
+        if let Ok(true) = is_readonly_dir(path) {
+            show_permission_denied_error(path);
+            return true;
         }
 
         // Recursive case: this is a directory.

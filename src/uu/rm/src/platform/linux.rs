@@ -264,10 +264,10 @@ pub fn safe_remove_dir_recursive_impl(path: &Path, dir_fd: &DirFd, options: &Opt
     let entries = match dir_fd.read_dir() {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
-            if !options.force {
-                show_permission_denied_error(path);
-            }
-            return !options.force;
+            // Even with -f we must report permission errors and
+            // propagate a failure in the exit status to match GNU rm.
+            show_permission_denied_error(path);
+            return true;
         }
         Err(e) => {
             return handle_error_with_force(e, path, options);
