@@ -83,10 +83,20 @@ fn show_removal_error(error: std::io::Error, path: &Path) -> bool {
 
 /// Helper function for permission denied errors
 fn show_permission_denied_error(path: &Path) -> bool {
-    // Align with GNU rm: keep the generic wording, regardless of whether the
-    // target is a directory. This also keeps output compatible with the
-    // existing POSIX/Solaris variants of the tests.
-    show_error!("cannot remove {}: Permission denied", path.quote());
+    // GNU rm prints "directory " when it knows the target is a directory.
+    // Try to detect that here; fall back to the generic wording otherwise.
+    let is_directory = fs::metadata(path)
+        .map(|md| md.is_dir() && !is_symlink_dir(&md))
+        .unwrap_or(false);
+
+    if is_directory {
+        show_error!(
+            "cannot remove directory {}: Permission denied",
+            path.quote()
+        );
+    } else {
+        show_error!("cannot remove {}: Permission denied", path.quote());
+    }
     true
 }
 
