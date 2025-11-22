@@ -1157,7 +1157,7 @@ fn test_rm_directory_not_executable() {
         ],
     ];
     assert!(
-        allowed.iter().any(|expected| *expected == stderr_lines),
+        allowed.contains(&stderr_lines),
         "unexpected stderr:\n{stderr}"
     );
 
