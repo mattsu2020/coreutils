@@ -97,11 +97,13 @@ fn handle_error_with_force(e: std::io::Error, path: &Path, options: &Options) ->
         return true;
     }
 
+    // With -f we suppress the message for other errors, but the failure must
+    // still affect the exit status (GNU rm does not ignore real errors with -f).
     if !options.force {
         let e = e.map_err_context(|| translate!("rm-error-cannot-remove", "file" => path.quote()));
         show_error!("{e}");
     }
-    !options.force
+    true
 }
 
 /// Helper to handle permission denied errors
@@ -114,25 +116,20 @@ fn handle_permission_denied(
     // When we can't open a subdirectory due to permission denied,
     // try to remove it directly (it might be empty).
     // This matches GNU rm behavior with -f flag.
-    if let Err(remove_err) = dir_fd.unlink_at(entry_name, true) {
-        // Failed to remove - show appropriate error
-        if remove_err.kind() == std::io::ErrorKind::PermissionDenied {
-            // Permission denied errors are always shown, even with force
-            show_permission_denied_error(entry_path);
-            return true;
-        } else if !options.force {
-            let remove_err = remove_err.map_err_context(
-                || translate!("rm-error-cannot-remove", "file" => entry_path.quote()),
-            );
-            show_error!("{remove_err}");
-            return true;
+    match dir_fd.unlink_at(entry_name, true) {
+        Ok(_) => {
+            // Successfully removed an otherwise unreadable empty directory
+            verbose_removed_directory(entry_path, options);
+            false
         }
-        // With force mode, suppress non-permission errors
-        return !options.force;
+        Err(_) => {
+            // We already know the root cause is missing search permission.
+            // Always report it and propagate the error even with -f so the
+            // exit status matches GNU rm.
+            show_permission_denied_error(entry_path);
+            true
+        }
     }
-    // Successfully removed empty directory
-    verbose_removed_directory(entry_path, options);
-    false
 }
 
 /// Helper to handle unlink operation with error reporting
