@@ -144,9 +144,15 @@ fn handle_unlink(
     options: &Options,
 ) -> bool {
     if let Err(e) = dir_fd.unlink_at(entry_name, is_dir) {
-        let e = e
-            .map_err_context(|| translate!("rm-error-cannot-remove", "file" => entry_path.quote()));
-        show_error!("{e}");
+        if is_dir && e.kind() == std::io::ErrorKind::PermissionDenied {
+            // Match GNU wording for directories when permission is denied.
+            show_permission_denied_error(entry_path);
+        } else {
+            let e = e.map_err_context(|| {
+                translate!("rm-error-cannot-remove", "file" => entry_path.quote())
+            });
+            show_error!("{e}");
+        }
         true
     } else {
         if is_dir {
