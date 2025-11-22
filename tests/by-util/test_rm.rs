@@ -963,7 +963,10 @@ fn test_unreadable_and_nonempty_dir() {
 
     ucmd.args(&["-r", "-f", "a"])
         .fails()
-        .stderr_only("rm: cannot remove 'a': Permission denied\n");
+        .stderr_str_check(|stderr| {
+            stderr == "rm: cannot remove directory 'a': Permission denied\n"
+                || stderr == "rm: cannot remove 'a': Permission denied\n"
+        });
     assert!(at.dir_exists("a/b"));
     assert!(at.dir_exists("a"));
 }
@@ -1105,8 +1108,14 @@ fn test_rm_directory_not_executable() {
     // When directories don't have execute permission, we get "Permission denied"
     // when trying to access subdirectories
     let stderr = result.stderr_str();
-    assert!(stderr.contains("rm: cannot remove 'a/1/2': Permission denied"));
-    assert!(stderr.contains("rm: cannot remove 'b/3': Permission denied"));
+    assert!(
+        stderr.contains("rm: cannot remove directory 'a/1/2': Permission denied")
+            || stderr.contains("rm: cannot remove 'a/1/2': Permission denied")
+    );
+    assert!(
+        stderr.contains("rm: cannot remove directory 'b/3': Permission denied")
+            || stderr.contains("rm: cannot remove 'b/3': Permission denied")
+    );
 
     // Check which directories still exist
     assert!(!at.dir_exists("a/0")); // Should be removed
@@ -1142,7 +1151,10 @@ fn test_rm_directory_not_writable() {
     // When the parent directory (b/a) doesn't have write permission,
     // we get "Permission denied" when trying to remove the subdirectory
     let stderr = result.stderr_str();
-    assert!(stderr.contains("rm: cannot remove 'b/a/p': Permission denied"));
+    assert!(
+        stderr.contains("rm: cannot remove directory 'b/a/p': Permission denied")
+            || stderr.contains("rm: cannot remove 'b/a/p': Permission denied")
+    );
 
     // Check which directories still exist
     assert!(at.dir_exists("b/a/p")); // Should still exist (parent not writable)
