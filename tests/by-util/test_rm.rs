@@ -1311,6 +1311,78 @@ fn test_rm_permission_denied_traversal() {
 
     // chmod u+x b
     at.set_mode("b", 0o700);
-    // test -d b/3 || fail=1 -> b/3 should exist
     assert!(at.dir_exists("b/3"));
+}
+
+#[cfg(unix)]
+#[test]
+fn test_rm_gnu_compatibility() {
+    let (at, mut ucmd) = at_and_ucmd!();
+
+    // Part 1: Permission denied on child directory (parent not writable)
+    // mkdir -p b/a/p b/c b/d
+    at.mkdir_all("b/a/p");
+    at.mkdir_all("b/c");
+    at.mkdir_all("b/d");
+    
+    // chmod ug-w b/a
+    // We assume default was 755 (rwxr-xr-x) or similar. 
+    // ug-w means remove write from user and group.
+    // We can simulate this by setting mode to 555 (r-xr-xr-x).
+    at.set_mode("b/a", 0o555);
+
+    // rm -rf b
+    let result = ucmd.arg("-rf").arg("b").run();
+    
+    assert!(!result.succeeded());
+    let stderr = result.stderr_str();
+    
+    // Expected: rm: cannot remove directory 'b/a/p': Permission denied
+    // The script also allows "cannot remove 'b/a/p': Permission denied" but GNU rm usually says "directory" here.
+    assert!(stderr.contains("cannot remove directory 'b/a/p': Permission denied") || 
+            stderr.contains("cannot remove 'b/a/p': Permission denied"),
+            "Part 1 failed. Stderr: {}", stderr);
+
+    assert!(at.dir_exists("b/a/p"));
+    assert!(!at.dir_exists("b/c"));
+    assert!(!at.dir_exists("b/d"));
+
+    // Part 2: Permission denied on traversal (no execute on parent)
+    let (at, mut ucmd) = at_and_ucmd!();
+    
+    // mkdir -p a/0
+    at.mkdir_all("a/0");
+    // mkdir -p a/1/2 b/3
+    at.mkdir_all("a/1/2");
+    at.mkdir_all("b/3");
+    // mkdir a/2 a/3
+    at.mkdir("a/2");
+    at.mkdir("a/3");
+
+    // chmod u-x a/1 b
+    // We want to remove execute permission.
+    // 0o644 is rw-r--r-- (no exec).
+    at.set_mode("a/1", 0o644);
+    at.set_mode("b", 0o644);
+
+    // rm -rf a b
+    let result = ucmd.arg("-rf").arg("a").arg("b").run();
+    
+    assert!(!result.succeeded());
+    let stderr = result.stderr_str();
+    
+    // Expected:
+    // rm: cannot remove 'a/1': Permission denied
+    // rm: cannot remove 'b': Permission denied
+    assert!(stderr.contains("cannot remove 'a/1': Permission denied"), "Missing error for a/1. Stderr: {}", stderr);
+    assert!(stderr.contains("cannot remove 'b': Permission denied"), "Missing error for b. Stderr: {}", stderr);
+    
+    // Ensure NO "directory" word for these cases (as per GNU behavior when no exec)
+    assert!(!stderr.contains("cannot remove directory 'a/1'"), "Should not say 'directory' for a/1");
+    assert!(!stderr.contains("cannot remove directory 'b'"), "Should not say 'directory' for b");
+
+    assert!(!at.dir_exists("a/0"));
+    assert!(at.dir_exists("a/1"));
+    assert!(!at.dir_exists("a/2"));
+    assert!(!at.dir_exists("a/3"));
 }
