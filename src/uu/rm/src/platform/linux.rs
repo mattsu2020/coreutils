@@ -233,8 +233,13 @@ pub fn safe_remove_dir_recursive(
 
     // After processing all children, remove the directory itself
     if error {
-        error
-    } else {
+        // Child removal failed. Still attempt to remove the current
+        // directory so that the user sees the top-level failure (e.g.,
+        // "Directory not empty") just like GNU rm.
+        let _ = remove_dir_with_special_cases(path, options, false);
+        true
+    }
+    else {
         // Ask user permission if needed
         if options.interactive == InteractiveMode::Always && !prompt_dir(path, options) {
             return false;

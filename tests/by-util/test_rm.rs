@@ -976,7 +976,10 @@ fn test_only_first_error_recursive() {
     // the directories containing the file.
     ucmd.args(&["-r", "-f", "a"])
         .fails()
-        .stderr_only("rm: cannot remove 'a/b/file': Permission denied\n");
+        .stderr_only(
+            "rm: cannot remove 'a/b/file': Permission denied\n\
+rm: cannot remove 'a': Directory not empty\n",
+        );
     assert!(at.file_exists("a/b/file"));
     assert!(at.dir_exists("a/b"));
     assert!(at.dir_exists("a"));
@@ -1198,6 +1201,7 @@ fn test_rm_directory_not_writable() {
         stderr.contains("rm: cannot remove directory 'b/a/p': Permission denied")
             || stderr.contains("rm: cannot remove 'b/a/p': Permission denied")
     );
+    assert!(stderr.contains("rm: cannot remove 'b': Directory not empty"));
 
     // Check which directories still exist
     assert!(at.dir_exists("b/a/p")); // Should still exist (parent not writable)

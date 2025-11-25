@@ -632,6 +632,24 @@ fn remove_dir_recursive(
     options: &Options,
     progress_bar: Option<&ProgressBar>,
 ) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        return safe_remove_dir_recursive(path, options, progress_bar);
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        return remove_dir_recursive_inner(path, options, progress_bar, true);
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn remove_dir_recursive_inner(
+    path: &Path,
+    options: &Options,
+    progress_bar: Option<&ProgressBar>,
+    is_root: bool,
+) -> bool {
     // Base case 1: this is a file or a symbolic link.
     //
     // The symbolic link case is important because it could be a link to
@@ -651,103 +669,107 @@ fn remove_dir_recursive(
         return false;
     }
 
-    // Use secure traversal on Linux for all recursive directory removals
-    #[cfg(target_os = "linux")]
-    {
-        safe_remove_dir_recursive(path, options, progress_bar)
-    }
-
     // Fallback for non-Linux or use fs::remove_dir_all for very long paths
-    #[cfg(not(target_os = "linux"))]
-    {
-        if let Some(s) = path.to_str() {
-            if s.len() > 1000 {
-                match fs::remove_dir_all(path) {
-                    Ok(_) => return false,
-                    Err(e) => {
-                        let e = e.map_err_context(
-                            || translate!("rm-error-cannot-remove", "file" => path.quote()),
-                        );
-                        show_error!("{e}");
-                        return true;
-                    }
+    if let Some(s) = path.to_str() {
+        if s.len() > 1000 {
+            match fs::remove_dir_all(path) {
+                Ok(_) => return false,
+                Err(e) => {
+                    let e = e.map_err_context(
+                        || translate!("rm-error-cannot-remove", "file" => path.quote()),
+                    );
+                    show_error!("{e}");
+                    return true;
                 }
             }
         }
-
-        // On Windows, a directory marked read-only should behave like a
-        // write-protected directory on Unix: refuse removal and report
-        // a permission error instead of silently deleting it.
-        #[cfg(windows)]
-        if let Ok(true) = is_readonly_dir(path) {
-            show_permission_denied_error(path);
-            return true;
-        }
-
-        // Recursive case: this is a directory.
-        #[cfg(unix)]
-        if !is_executable(path) {
-            show_permission_denied_error(path);
-            return true;
-        }
-
-        let mut error = false;
-        match fs::read_dir(path) {
-            Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
-                // This is not considered an error.
-            }
-            Err(_) => error = true,
-            Ok(iter) => {
-                for entry in iter {
-                    match entry {
-                        Err(_) => error = true,
-                        Ok(entry) => {
-                            let child_error =
-                                remove_dir_recursive(&entry.path(), options, progress_bar);
-                            error = error || child_error;
-                        }
-                    }
-                }
-            }
-        }
-
-        // Ask the user whether to remove the current directory.
-        if options.interactive == InteractiveMode::Always && !prompt_dir(path, options) {
-            return false;
-        }
-
-        // Try removing the directory itself.
-        match fs::remove_dir(path) {
-            Err(e) if !error && e.kind() == io::ErrorKind::PermissionDenied => {
-                // Prefer the more specific "directory" wording when we know it is a directory.
-                show_permission_denied_error(path);
-                error = true;
-            }
-            Err(_) if !error && !is_readable(path) => {
-                // For compatibility with GNU test case
-                // `tests/rm/unread2.sh`, show "Permission denied" in this
-                // case instead of "Directory not empty".
-                show_permission_denied_error(path);
-                error = true;
-            }
-            Err(e) if !error => {
-                let e = e.map_err_context(
-                    || translate!("rm-error-cannot-remove", "file" => path.quote()),
-                );
-                show_error!("{e}");
-                error = true;
-            }
-            Err(_) => {
-                // If there has already been at least one error when
-                // trying to remove the children, then there is no need to
-                // show another error message as we return from each level
-                // of the recursion.
-            }
-            Ok(_) => verbose_removed_directory(path, options),
-        }
-
-        error
     }
+
+    // On Windows, a directory marked read-only should behave like a
+    // write-protected directory on Unix: refuse removal and report
+    // a permission error instead of silently deleting it.
+    #[cfg(windows)]
+    if let Ok(true) = is_readonly_dir(path) {
+        show_permission_denied_error(path);
+        return true;
+    }
+
+    // Recursive case: this is a directory.
+    #[cfg(unix)]
+    if !is_executable(path) {
+        show_permission_denied_error(path);
+        return true;
+    }
+
+    let mut error = false;
+    match fs::read_dir(path) {
+        Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
+            // This is not considered an error.
+        }
+        Err(_) => error = true,
+        Ok(iter) => {
+            for entry in iter {
+                match entry {
+                    Err(_) => error = true,
+                    Ok(entry) => {
+                        let child_error =
+                            remove_dir_recursive_inner(&entry.path(), options, progress_bar, false);
+                        error = error || child_error;
+                    }
+                }
+            }
+        }
+    }
+
+    // If a child failed to be removed and this is not the top-level
+    // target, propagate the failure without trying to remove this
+    // directory. GNU rm only reports the top-level ENOTEMPTY in this case.
+    if error && !is_root {
+        return true;
+    }
+
+    // Ask the user whether to remove the current directory.
+    if options.interactive == InteractiveMode::Always && !prompt_dir(path, options) {
+        return false;
+    }
+
+    // Try removing the directory itself.
+    match fs::remove_dir(path) {
+        Err(e) if !error && e.kind() == io::ErrorKind::PermissionDenied => {
+            // Prefer the more specific "directory" wording when we know it is a directory.
+            show_permission_denied_error(path);
+            error = true;
+        }
+        Err(_) if !error && !is_readable(path) => {
+            // For compatibility with GNU test case
+            // `tests/rm/unread2.sh`, show "Permission denied" in this
+            // case instead of "Directory not empty".
+            show_permission_denied_error(path);
+            error = true;
+        }
+        Err(e) if !error => {
+            let e = e.map_err_context(
+                || translate!("rm-error-cannot-remove", "file" => path.quote()),
+            );
+            show_error!("{e}");
+            error = true;
+        }
+        Err(e) if is_root => {
+            // Surface the failure of the top-level directory even if
+            // earlier entries already produced errors, to match GNU rm.
+            show_removal_error(e, path);
+            error = true;
+        }
+        Err(_) => {
+            // If there has already been at least one error when
+            // trying to remove the children, then there is no need to
+            // show another error message as we return from each level
+            // of the recursion.
+        }
+        Ok(_) => verbose_removed_directory(path, options),
+    }
+
+    error
 }
 
 fn handle_dir(path: &Path, options: &Options, progress_bar: Option<&ProgressBar>) -> bool {
