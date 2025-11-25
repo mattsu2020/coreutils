@@ -671,11 +671,16 @@ fn remove_dir_recursive(
                 show_error!("{e}");
                 error = true;
             }
-            Err(_) => {
-                // If there has already been at least one error when
-                // trying to remove the children, then there is no need to
-                // show another error message as we return from each level
-                // of the recursion.
+            Err(e) => {
+                // When child removal failed (error == true), GNU rm still reports
+                // that the parent directory is not empty. Mirror that behavior.
+                if e.kind() == io::ErrorKind::DirectoryNotEmpty {
+                    let e = e.map_err_context(
+                        || translate!("rm-error-cannot-remove", "file" => path.quote()),
+                    );
+                    show_error!("{e}");
+                }
+                error = true;
             }
             Ok(_) => verbose_removed_directory(path, options),
         }

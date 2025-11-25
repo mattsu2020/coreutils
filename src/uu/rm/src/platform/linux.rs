@@ -175,12 +175,13 @@ pub fn remove_dir_with_special_cases(path: &Path, options: &Options, error_occur
             true
         }
         Err(e) if !error_occurred => show_removal_error(e, path),
-        Err(_) => {
-            // If we already had errors while
-            // trying to remove the children, then there is no need to
-            // show another error message as we return from each level
-            // of the recursion.
-            error_occurred
+        Err(e) => {
+            // When child removal failed, still report that the directory
+            // is not empty to match GNU rm diagnostics.
+            if e.kind() == std::io::ErrorKind::DirectoryNotEmpty {
+                let _ = show_removal_error(e, path);
+            }
+            true
         }
         Ok(_) => {
             verbose_removed_directory(path, options);

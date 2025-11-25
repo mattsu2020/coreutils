@@ -686,18 +686,21 @@ fn test_force_prompts_order() {
     assert!(!at.file_exists(empty_file));
 }
 
+#[cfg(unix)]
 #[test]
-#[ignore = "issue #3722"]
 fn test_directory_rights_rm1() {
     let (at, mut ucmd) = at_and_ucmd!();
     at.mkdir_all("b/a/p");
     at.mkdir_all("b/c");
     at.mkdir_all("b/d");
-    at.set_readonly("b/a");
+    // Remove write permission but keep read/execute so traversal still works.
+    at.set_mode("b/a", 0o555);
     ucmd.args(&["-rf", "b"])
         .fails()
-        .stderr_contains("Permission denied");
+        .stderr_contains("cannot remove 'b/a/p': Permission denied")
+        .stderr_contains("cannot remove 'b': Directory not empty");
     assert!(at.dir_exists("b/a/p"));
+    assert!(at.dir_exists("b"));
     assert!(!at.dir_exists("b/c"));
     assert!(!at.dir_exists("b/d"));
 }
