@@ -706,11 +706,27 @@ fn remove_dir_recursive_impl(
     progress_bar: Option<&ProgressBar>,
     parent_dev_id: Option<u64>,
 ) -> bool {
-    let metadata = match path.symlink_metadata() {
-        Ok(metadata) => metadata,
-        Err(e) => return show_removal_error(e, path),
-    };
+    path.symlink_metadata().map_or_else(
+        |e| show_removal_error(e, path),
+        |metadata| {
+            remove_dir_recursive_with_metadata(
+                path,
+                options,
+                progress_bar,
+                parent_dev_id,
+                &metadata,
+            )
+        },
+    )
+}
 
+fn remove_dir_recursive_with_metadata(
+    path: &Path,
+    options: &Options,
+    progress_bar: Option<&ProgressBar>,
+    parent_dev_id: Option<u64>,
+    metadata: &Metadata,
+) -> bool {
     // Base case 1: this is a file or a symbolic link.
     //
     // The symbolic link case is important because it could be a link to
@@ -731,11 +747,11 @@ fn remove_dir_recursive_impl(
     }
 
     // Base case 3: this is a directory on a different device
-    if should_skip_different_device(parent_dev_id, &metadata, options, path) {
+    if should_skip_different_device(parent_dev_id, metadata, options, path) {
         return true;
     }
 
-    let next_parent_dev_id = compute_next_parent_dev_id(options, &metadata);
+    let next_parent_dev_id = compute_next_parent_dev_id(options, metadata);
 
     // Use secure traversal on Linux for all recursive directory removals
     #[cfg(target_os = "linux")]
