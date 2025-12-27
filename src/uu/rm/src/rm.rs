@@ -256,7 +256,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         preserve_root: !matches.get_flag(OPT_NO_PRESERVE_ROOT),
         preserve_root_all: matches
             .get_many::<String>(OPT_PRESERVE_ROOT)
-            .map_or(false, |values| values.any(|v| v == "all")),
+            .map_or(false, |mut values| values.any(|v| v == "all")),
         recursive: matches.get_flag(OPT_RECURSIVE),
         dir: matches.get_flag(OPT_DIR),
         verbose: matches.get_flag(OPT_VERBOSE),

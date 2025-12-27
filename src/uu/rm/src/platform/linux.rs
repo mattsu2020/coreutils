@@ -24,9 +24,9 @@ use uucore::show_error;
 use uucore::translate;
 
 use super::super::{
-    InteractiveMode, Options, is_dir_empty, is_readable_metadata, prompt_descend, prompt_dir,
-    prompt_file, remove_file, should_skip_different_device_with_dev, show_permission_denied_error,
-    show_removal_error, verbose_removed_directory, verbose_removed_file,
+    InteractiveMode, Options, is_dir_empty, is_readable_metadata, prompt_descend, remove_file,
+    should_skip_different_device_with_dev, show_permission_denied_error, show_removal_error,
+    verbose_removed_directory, verbose_removed_file,
 };
 
 #[inline]
