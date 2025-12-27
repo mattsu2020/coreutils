@@ -20,9 +20,9 @@ use uucore::show_error;
 use uucore::translate;
 
 use super::super::{
-    InteractiveMode, Options, RmError, is_dir_empty, is_readable_metadata, prompt_descend,
-    prompt_dir, prompt_file, remove_file, show_permission_denied_error, show_removal_error,
-    verbose_removed_directory, verbose_removed_file,
+    InteractiveMode, Options, is_dir_empty, is_readable_metadata, prompt_descend, prompt_dir,
+    prompt_file, remove_file, should_skip_different_device_with_dev, show_permission_denied_error,
+    show_removal_error, verbose_removed_directory, verbose_removed_file,
 };
 
 /// Whether the given file or directory is readable.
@@ -314,22 +314,16 @@ pub fn safe_remove_dir_recursive_impl(
         let is_dir = (entry_stat.st_mode & libc::S_IFMT) == libc::S_IFDIR;
 
         if is_dir {
-            if check_device {
-                if let Some(parent_dev_id) = parent_dev_id {
-                    if entry_stat.st_dev != parent_dev_id {
-                        show_error!(
-                            "{}",
-                            RmError::SkippingDirectoryOnDifferentDevice(
-                                entry_path.as_os_str().to_os_string()
-                            )
-                        );
-                        if options.preserve_root_all {
-                            show_error!("{}", RmError::PreserveRootAllInEffect);
-                        }
-                        error = true;
-                        continue;
-                    }
-                }
+            if check_device
+                && should_skip_different_device_with_dev(
+                    parent_dev_id,
+                    entry_stat.st_dev,
+                    options,
+                    &entry_path,
+                )
+            {
+                error = true;
+                continue;
             }
             // Ask user if they want to descend into this directory
             if options.interactive == InteractiveMode::Always

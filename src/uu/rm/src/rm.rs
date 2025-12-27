@@ -616,8 +616,28 @@ fn should_skip_different_device(
     options: &Options,
     path: &Path,
 ) -> bool {
+    should_skip_different_device_with_dev(parent_dev_id, metadata.dev(), options, path)
+}
+
+#[cfg(not(unix))]
+fn should_skip_different_device(
+    _parent_dev_id: Option<u64>,
+    _metadata: &Metadata,
+    _options: &Options,
+    _path: &Path,
+) -> bool {
+    false
+}
+
+#[cfg(unix)]
+fn should_skip_different_device_with_dev(
+    parent_dev_id: Option<u64>,
+    dev_id: u64,
+    options: &Options,
+    path: &Path,
+) -> bool {
     if let Some(parent_dev_id) = parent_dev_id {
-        if metadata.dev() != parent_dev_id {
+        if dev_id != parent_dev_id {
             show_error!(
                 "{}",
                 RmError::SkippingDirectoryOnDifferentDevice(path.as_os_str().to_os_string())
@@ -632,9 +652,9 @@ fn should_skip_different_device(
 }
 
 #[cfg(not(unix))]
-fn should_skip_different_device(
+fn should_skip_different_device_with_dev(
     _parent_dev_id: Option<u64>,
-    _metadata: &Metadata,
+    _dev_id: u64,
     _options: &Options,
     _path: &Path,
 ) -> bool {
