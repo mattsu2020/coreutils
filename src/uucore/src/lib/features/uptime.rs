@@ -15,6 +15,7 @@
 use crate::error::{UError, UResult};
 use crate::translate;
 use chrono::Local;
+use fluent::FluentArgs;
 use libc::time_t;
 use thiserror::Error;
 
@@ -426,11 +427,14 @@ pub fn get_loadavg() -> UResult<(f64, f64, f64)> {
 #[inline]
 pub fn get_formatted_loadavg() -> UResult<String> {
     let loadavg = get_loadavg()?;
-    Ok(translate!(
+    // Keep fixed 2-decimal formatting by passing pre-formatted strings.
+    let mut args = FluentArgs::new();
+    args.set("avg1", format!("{:.2}", loadavg.0));
+    args.set("avg5", format!("{:.2}", loadavg.1));
+    args.set("avg15", format!("{:.2}", loadavg.2));
+    Ok(crate::locale::get_message_with_args(
         "uptime-lib-format-loadavg",
-        "avg1" => format!("{:.2}", loadavg.0),
-        "avg5" => format!("{:.2}", loadavg.1),
-        "avg15" => format!("{:.2}", loadavg.2),
+        args,
     ))
 }
 
