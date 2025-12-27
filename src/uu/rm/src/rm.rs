@@ -651,16 +651,6 @@ fn should_skip_different_device_with_dev(
     false
 }
 
-#[cfg(not(unix))]
-fn should_skip_different_device_with_dev(
-    _parent_dev_id: Option<u64>,
-    _dev_id: u64,
-    _options: &Options,
-    _path: &Path,
-) -> bool {
-    false
-}
-
 #[cfg(unix)]
 fn compute_next_parent_dev_id(options: &Options, metadata: &Metadata) -> Option<u64> {
     if options.one_fs || options.preserve_root_all {
