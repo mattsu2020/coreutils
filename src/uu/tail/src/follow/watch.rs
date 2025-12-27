@@ -322,7 +322,7 @@ impl Observer {
         match event.kind {
             EventKind::Modify(ModifyKind::Metadata(MetadataKind::Any | MetadataKind::WriteTime) | ModifyKind::Data(DataChange::Any) | ModifyKind::Name(RenameMode::To)) |
             EventKind::Create(CreateKind::File | CreateKind::Folder | CreateKind::Any) => {
-                if let Ok(new_md) = event_path.metadata() {
+                if let Ok(mut new_md) = event_path.metadata() {
                     let is_tailable = new_md.is_tailable();
                     let pd = self.files.get(event_path);
                     if let Some(old_md) = &pd.metadata {
@@ -350,11 +350,28 @@ impl Observer {
                                 );
                                 self.files.update_reader(event_path)?;
                             } else if old_md.got_truncated(&new_md)? {
-                                show_error!(
-                                    "{}",
-                                    translate!("tail-status-file-truncated", "file" => display_name)
-                                );
-                                self.files.update_reader(event_path)?;
+                                // Re-check a few times to avoid false truncation reports when a
+                                // file is truncated and immediately rewritten to the same size.
+                                let mut confirmed = true;
+                                for _ in 0..3 {
+                                    std::thread::sleep(std::time::Duration::from_millis(10));
+                                    if let Ok(md) = event_path.metadata() {
+                                        new_md = md;
+                                        if !old_md.got_truncated(&new_md)? {
+                                            confirmed = false;
+                                            break;
+                                        }
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                if confirmed {
+                                    show_error!(
+                                        "{}",
+                                        translate!("tail-status-file-truncated", "file" => display_name)
+                                    );
+                                    self.files.update_reader(event_path)?;
+                                }
                             }
                             paths.push(event_path.clone());
                         } else if !is_tailable && old_md.is_tailable() {
