@@ -12,7 +12,7 @@ fn test_invalid_arg() {
 
 #[test]
 #[cfg(unix)]
-fn test_broken_pipe_still_exits_success() {
+fn test_broken_pipe_exits_on_sigpipe() {
     use std::process::Stdio;
 
     let mut child = new_ucmd!()
@@ -26,9 +26,7 @@ fn test_broken_pipe_still_exits_success() {
     child.close_stdout();
     let result = child.wait().unwrap();
 
-    result
-        .code_is(0)
-        .stderr_contains("write error: Broken pipe");
+    result.signal_is(libc::SIGPIPE).stderr_is("");
 }
 
 #[test]

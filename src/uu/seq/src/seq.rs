@@ -15,6 +15,8 @@ use uucore::error::{FromIo, UResult};
 use uucore::extendedbigdecimal::ExtendedBigDecimal;
 use uucore::format::num_format::FloatVariant;
 use uucore::format::{Format, num_format};
+#[cfg(unix)]
+use uucore::signals::enable_pipe_errors;
 use uucore::{fast_inc::fast_inc, format_usage};
 
 mod error;
@@ -94,6 +96,9 @@ fn select_precision(
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let matches =
         uucore::clap_localization::handle_clap_result(uu_app(), split_short_args_with_value(args))?;
+
+    #[cfg(unix)]
+    enable_pipe_errors()?;
 
     let numbers_option = matches.get_many::<String>(ARG_NUMBERS);
 
@@ -211,12 +216,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
     match result {
         Ok(()) => Ok(()),
-        Err(err) if err.kind() == std::io::ErrorKind::BrokenPipe => {
-            // GNU seq prints the Broken pipe message but still exits with status 0
-            let err = err.map_err_context(|| "write error".into());
-            uucore::show_error!("{err}");
-            Ok(())
-        }
+        Err(err) if err.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
         Err(err) => Err(err.map_err_context(|| "write error".into())),
     }
 }
