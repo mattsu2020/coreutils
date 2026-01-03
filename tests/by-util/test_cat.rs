@@ -601,7 +601,6 @@ fn test_write_fast_fallthrough_uses_flush() {
 }
 
 #[test]
-#[cfg(unix)]
 fn test_domain_socket() {
     use std::os::unix::net::UnixListener;
 
