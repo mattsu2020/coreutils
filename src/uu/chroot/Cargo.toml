@@ -23,6 +23,7 @@ thiserror = { workspace = true }
 uucore = { workspace = true, features = ["entries", "fs"] }
 fluent = { workspace = true }
 nix = { workspace = true }
+libc = { workspace = true }
 
 [[bin]]
 name = "chroot"

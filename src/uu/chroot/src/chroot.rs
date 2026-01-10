@@ -8,10 +8,14 @@ mod error;
 
 use crate::error::ChrootError;
 use clap::{Arg, ArgAction, Command};
-use nix::unistd::{
-    Gid, Uid, chroot as nix_chroot, setgid as nix_setgid, setgroups as nix_setgroups,
-    setuid as nix_setuid,
-};
+use nix::unistd::{Gid, Uid, chroot as nix_chroot, setgid as nix_setgid, setuid as nix_setuid};
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "tvos",
+    target_os = "watchos"
+)))]
+use nix::unistd::setgroups as nix_setgroups;
 use std::io::{Error, ErrorKind};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -309,8 +313,32 @@ fn supplemental_gids(uid: Uid) -> Vec<Gid> {
 }
 
 /// Set the supplemental group IDs for this process.
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "tvos",
+    target_os = "watchos"
+)))]
 fn set_supplemental_gids(gids: &[Gid]) -> std::io::Result<()> {
     nix_setgroups(gids).map_err(Error::from)
+}
+
+/// Set the supplemental group IDs for this process.
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "tvos",
+    target_os = "watchos"
+))]
+fn set_supplemental_gids(gids: &[Gid]) -> std::io::Result<()> {
+    // nix::unistd::setgroups is not exposed on Apple targets; call libc directly.
+    let raw: Vec<libc::gid_t> = gids.iter().map(|g| g.as_raw() as libc::gid_t).collect();
+    let res = unsafe { libc::setgroups(raw.len() as libc::c_int, raw.as_ptr()) };
+    if res == 0 {
+        Ok(())
+    } else {
+        Err(Error::last_os_error())
+    }
 }
 
 /// Set the group ID of this process.
