@@ -225,6 +225,21 @@ fn scan_number_prefix(
     })
 }
 
+fn maybe_warn_precision_loss(input: &str) {
+    const MAX_UNSCALED_DIGITS: usize = 18;
+    let trimmed = trim_trailing_blanks(input);
+    let decimal_sep = locale_decimal_separator_char();
+    let mut grouping_sep = locale_grouping_separator_char();
+    if grouping_sep == Some(decimal_sep) {
+        grouping_sep = None;
+    }
+    if let Some(scan) = scan_number_prefix(trimmed, decimal_sep, grouping_sep) {
+        if scan.digits > MAX_UNSCALED_DIGITS {
+            uucore::show_error!("large input value '{}': possible precision loss", trimmed);
+        }
+    }
+}
+
 fn apply_decimal_separator(num: &str, decimal_sep: char) -> String {
     if decimal_sep == '.' {
         return num.to_string();
@@ -272,6 +287,19 @@ fn apply_grouping(num: &str, grouping_sep: &str, decimal_sep: char) -> String {
     }
 
     out
+}
+
+fn unit_separator_skip_char(unit_separator: &str, unit_separator_specified: bool) -> Option<char> {
+    if !unit_separator_specified {
+        return None;
+    }
+    if unit_separator.chars().count() == 1 {
+        let ch = unit_separator.chars().next().unwrap();
+        if ch.is_whitespace() && !ch.is_ascii_whitespace() {
+            return Some(ch);
+        }
+    }
+    None
 }
 
 fn find_numeric_beginning(s: &str) -> Option<&str> {
@@ -330,10 +358,15 @@ fn find_valid_number_with_suffix(s: &str, unit: Unit) -> Option<&str> {
 }
 
 fn detailed_error_message(s: &str, unit: &Unit) -> Option<String> {
-    parse_number_with_suffix(s, unit).err()
+    parse_number_with_suffix(s, unit, "", false).err()
 }
 
-fn parse_number_with_suffix(s: &str, unit: &Unit) -> Result<(f64, Option<Suffix>)> {
+fn parse_number_with_suffix(
+    s: &str,
+    unit: &Unit,
+    unit_separator: &str,
+    unit_separator_specified: bool,
+) -> Result<(f64, Option<Suffix>)> {
     let trimmed = trim_trailing_blanks(s);
     if trimmed.is_empty() {
         return Err(translate!("numfmt-error-invalid-number-empty"));
@@ -367,7 +400,39 @@ fn parse_number_with_suffix(s: &str, unit: &Unit) -> Result<(f64, Option<Suffix>
         .parse::<f64>()
         .map_err(|_| translate!("numfmt-error-invalid-number", "input" => trimmed.quote()))?;
 
-    let rest = &trimmed[scan.end..];
+    let mut rest = &trimmed[scan.end..];
+
+    if !rest.is_empty() {
+        if !unit_separator.is_empty() && rest.starts_with(unit_separator) {
+            rest = &rest[unit_separator.len()..];
+        } else if unit_separator.is_empty() && !unit_separator_specified {
+            if let Some(first) = rest.chars().next() {
+                if is_blank_for_suffix(first) {
+                    let mut blank_count = 0usize;
+                    let mut blank_bytes = 0usize;
+                    for (idx, ch) in rest.char_indices() {
+                        if is_blank_for_suffix(ch) {
+                            blank_count += 1;
+                            blank_bytes = idx + ch.len_utf8();
+                        } else {
+                            break;
+                        }
+                    }
+                    let rest_after = &rest[blank_bytes..];
+                    if rest_after.is_empty() {
+                        rest = "";
+                    } else if blank_count == 1 {
+                        rest = rest_after;
+                    } else {
+                        return Err(translate!(
+                            "numfmt-error-invalid-suffix",
+                            "input" => trimmed.quote()
+                        ));
+                    }
+                }
+            }
+        }
+    }
 
     if rest.is_empty() {
         return Ok((number, None));
@@ -437,7 +502,7 @@ fn parse_number_with_suffix(s: &str, unit: &Unit) -> Result<(f64, Option<Suffix>
 }
 
 fn parse_suffix(s: &str, unit: &Unit) -> Result<(f64, Option<Suffix>)> {
-    parse_number_with_suffix(s, unit)
+    parse_number_with_suffix(s, unit, "", false)
 }
 
 /// Returns the implicit precision of a number, which is the count of digits after the dot. For
@@ -490,8 +555,14 @@ fn remove_suffix(i: f64, s: Option<Suffix>, u: Unit) -> Result<f64> {
     }
 }
 
-fn transform_from(s: &str, opts: &TransformOptions) -> Result<f64> {
-    let (i, suffix) = parse_number_with_suffix(s, &opts.from)?;
+fn transform_from(
+    s: &str,
+    opts: &TransformOptions,
+    unit_separator: &str,
+    unit_separator_specified: bool,
+) -> Result<f64> {
+    let (i, suffix) =
+        parse_number_with_suffix(s, &opts.from, unit_separator, unit_separator_specified)?;
     let i = i * (opts.from_unit as f64);
 
     remove_suffix(i, suffix, opts.from).map(|n| {
@@ -637,6 +708,10 @@ fn format_string(
         None => source,
     };
 
+    if options.debug {
+        maybe_warn_precision_loss(source_without_suffix);
+    }
+
     let precision = if let Some(p) = options.format.precision {
         p
     } else if options.transform.from == Unit::None && options.transform.to == Unit::None {
@@ -646,7 +721,12 @@ fn format_string(
     };
 
     let mut number = transform_to(
-        transform_from(source_without_suffix, &options.transform)?,
+        transform_from(
+            source_without_suffix,
+            &options.transform,
+            &options.unit_separator,
+            options.unit_separator_specified,
+        )?,
         &options.transform,
         options.round,
         precision,
@@ -711,7 +791,11 @@ fn split_bytes<'a>(input: &'a [u8], delim: &'a [u8]) -> impl Iterator<Item = &'a
     })
 }
 
-pub fn format_and_print_delimited(input: &[u8], options: &NumfmtOptions) -> Result<()> {
+pub fn format_and_print_delimited(
+    input: &[u8],
+    options: &NumfmtOptions,
+    append_eol: bool,
+) -> Result<()> {
     let delimiter = options.delimiter.as_ref().unwrap();
     let mut output: Vec<u8> = Vec::new();
     let eol = if options.zero_terminated {
@@ -782,18 +866,26 @@ pub fn format_and_print_delimited(input: &[u8], options: &NumfmtOptions) -> Resu
         }
     }
 
-    output.push(eol);
+    if append_eol {
+        output.push(eol);
+    }
     std::io::Write::write_all(&mut std::io::stdout(), &output).map_err(|e| e.to_string())?;
 
     Ok(())
 }
 
-pub fn format_and_print_whitespace(s: &str, options: &NumfmtOptions) -> Result<()> {
+pub fn format_and_print_whitespace(
+    s: &str,
+    options: &NumfmtOptions,
+    append_eol: bool,
+) -> Result<()> {
     let mut output = String::new();
+    let skip_whitespace =
+        unit_separator_skip_char(&options.unit_separator, options.unit_separator_specified);
 
     for (n, (prefix, field)) in (1..).zip(WhitespaceSplitter {
         s: Some(s),
-        skip_whitespace: None,
+        skip_whitespace,
     }) {
         let field_selected = uucore::ranges::contain(&options.fields, n);
         let prefix_len = prefix.chars().count();
@@ -841,8 +933,10 @@ pub fn format_and_print_whitespace(s: &str, options: &NumfmtOptions) -> Result<(
         }
     }
 
-    let eol = if options.zero_terminated { '\0' } else { '\n' };
-    output.push(eol);
+    if append_eol {
+        let eol = if options.zero_terminated { '\0' } else { '\n' };
+        output.push(eol);
+    }
     print!("{output}");
 
     Ok(())

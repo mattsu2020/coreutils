@@ -10,6 +10,7 @@ use uucore::translate;
 
 pub const DEBUG: &str = "debug";
 pub const DELIMITER: &str = "delimiter";
+pub const DEBUG: &str = "debug";
 pub const FIELD: &str = "field";
 pub const FIELD_DEFAULT: &str = "1";
 pub const FORMAT: &str = "format";
@@ -56,11 +57,13 @@ pub struct NumfmtOptions {
     pub round: RoundMethod,
     pub suffix: Option<String>,
     pub unit_separator: String,
+    pub unit_separator_specified: bool,
     pub format: FormatOptions,
     pub grouping: bool,
     pub invalid: InvalidModes,
     pub zero_terminated: bool,
     pub debug: bool,
+    pub dev_debug: bool,
 }
 
 #[derive(Clone, Copy)]

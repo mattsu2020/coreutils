@@ -48,7 +48,9 @@ numfmt-help-padding = remplir la sortie à N caractères ; N positif alignera à
 numfmt-help-header = imprimer (sans convertir) les N premières lignes d'en-tête ; N vaut 1 par défaut si non spécifié
 numfmt-help-round = utiliser METHOD pour l'arrondi lors de la mise à l'échelle
 numfmt-help-suffix = imprimer SUFFIX après chaque nombre formaté, et accepter les entrées se terminant optionnellement par SUFFIX
+numfmt-help-unit-separator = utiliser STRING pour séparer le nombre de toute unité lors de l'affichage ; par défaut, aucun séparateur n'est utilisé
 numfmt-help-invalid = définir le mode d'échec pour les entrées invalides
+numfmt-help-debug = afficher des avertissements sur d'éventuels problèmes de traitement
 numfmt-help-zero-terminated = le délimiteur de ligne est NUL, pas retour à la ligne
 
 # Messages d'erreur
@@ -75,3 +77,4 @@ numfmt-error-invalid-format-width-overflow = format invalide '{ $format }' (déb
 numfmt-error-invalid-precision = précision invalide dans le format '{ $format }'
 numfmt-error-format-too-many-percent = le format '{ $format }' a trop de directives %
 numfmt-error-unknown-invalid-mode = Mode invalide inconnu : { $mode }
+numfmt-error-multiple-field-specifications = plusieurs spécifications de champs

@@ -50,6 +50,7 @@ numfmt-help-header = print (without converting) the first N header lines; N defa
 numfmt-help-round = use METHOD for rounding when scaling
 numfmt-help-suffix = print SUFFIX after each formatted number, and accept inputs optionally ending with SUFFIX
 numfmt-help-unit-separator = use STRING to separate the number from any unit when printing; by default, no separator is used
+numfmt-help-debug = print warnings about potential problems during processing
 numfmt-help-invalid = set the failure mode for invalid input
 numfmt-help-zero-terminated = line delimiter is NUL, not newline
 
@@ -77,6 +78,7 @@ numfmt-error-invalid-format-width-overflow = invalid format '{ $format }' (width
 numfmt-error-invalid-precision = invalid precision in format '{ $format }'
 numfmt-error-format-too-many-percent = format '{ $format }' has too many % directives
 numfmt-error-unknown-invalid-mode = Unknown invalid mode: { $mode }
+numfmt-error-multiple-field-specifications = multiple field specifications
 
 # Debug messages
 numfmt-debug-no-conversion = no conversion option specified

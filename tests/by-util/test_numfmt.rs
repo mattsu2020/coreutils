@@ -1132,6 +1132,16 @@ fn test_grouping_with_format_option_fails() {
 }
 
 #[test]
+fn test_debug_grouping_warns_in_c_locale() {
+    new_ucmd!()
+        .env("LC_ALL", "C")
+        .args(&["--debug", "--grouping", "10000"])
+        .succeeds()
+        .stdout_is("10000\n")
+        .stderr_is("numfmt: grouping has no effect in this locale\n");
+}
+
+#[test]
 fn test_zero_terminated_command_line_args() {
     new_ucmd!()
         .args(&["--zero-terminated", "--to=si", "1000"])
