@@ -3830,7 +3830,6 @@ dependencies = [
  "clap",
  "codspeed-divan-compat",
  "fluent",
- "libc",
  "thiserror 2.0.18",
  "uucore",
 ]

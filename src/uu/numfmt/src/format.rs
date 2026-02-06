@@ -2,12 +2,10 @@
 //
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
-// spell-checker:ignore powf　localeconv
-#[cfg(not(windows))]
-use std::ffi::CStr;
+// spell-checker:ignore powf
 use std::io::Write;
-use std::sync::Once;
 use uucore::display::Quotable;
+use uucore::i18n::decimal::{locale_decimal_separator, locale_grouping_separator};
 use uucore::translate;
 
 use crate::options::{NumfmtOptions, RoundMethod, TransformOptions};
@@ -93,57 +91,16 @@ fn trim_trailing_blanks(s: &str) -> &str {
     s.trim_end_matches(is_blank_for_suffix)
 }
 
-fn is_c_locale() -> bool {
-    for key in ["LC_ALL", "LC_NUMERIC", "LANG"] {
-        if let Ok(value) = std::env::var(key) {
-            if value.is_empty() {
-                continue;
-            }
-            let lang = value.split('.').next().unwrap_or(&value);
-            if lang == "C" || lang == "POSIX" || lang.starts_with("C_") || lang.starts_with("C@") {
-                return true;
-            }
-            return false;
-        }
-    }
-    false
-}
-
-fn init_locale() {
-    static INIT: Once = Once::new();
-    INIT.call_once(|| unsafe {
-        let _ = libc::setlocale(libc::LC_ALL, b"\0".as_ptr() as *const i8);
-    });
-}
-
 fn locale_decimal_separator_char() -> char {
-    if is_c_locale() {
-        return '.';
-    }
-    init_locale();
-    unsafe {
-        let conv = libc::localeconv();
-        if conv.is_null() {
-            return '.';
-        }
-        let c_str = CStr::from_ptr((*conv).decimal_point);
-        c_str.to_string_lossy().chars().next().unwrap_or('.')
-    }
+    locale_decimal_separator().chars().next().unwrap_or('.')
 }
 
-pub(crate) fn locale_grouping_separator_string() -> Option<String> {
-    if is_c_locale() {
-        return None;
-    }
-    init_locale();
-    unsafe {
-        let conv = libc::localeconv();
-        if conv.is_null() {
-            return None;
-        }
-        let c_str = CStr::from_ptr((*conv).thousands_sep);
-        let sep = c_str.to_string_lossy().to_string();
-        if sep.is_empty() { None } else { Some(sep) }
+pub(crate) fn locale_grouping_separator_string() -> Option<&'static str> {
+    let grouping = locale_grouping_separator();
+    if grouping.is_empty() {
+        None
+    } else {
+        Some(grouping)
     }
 }
 
