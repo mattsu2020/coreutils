@@ -240,12 +240,8 @@ fn parse_options(args: &ArgMatches) -> Result<NumfmtOptions> {
         ));
     }
 
-    if format.grouping && to != Unit::None {
-        return Err(translate!(
-            "numfmt-error-grouping-cannot-be-combined-with-to"
-        ));
-    }
-    if grouping && to != Unit::None {
+    let grouping_requested = grouping || format.grouping;
+    if grouping_requested && to != Unit::None {
         return Err(translate!(
             "numfmt-error-grouping-cannot-be-combined-with-to"
         ));

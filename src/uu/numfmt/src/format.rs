@@ -157,7 +157,6 @@ fn decimal_separator_count(s: &str, decimal_sep: char) -> usize {
 struct NumberScan {
     end: usize,
     normalized: String,
-    digits: usize,
 }
 
 fn scan_number_prefix(
@@ -218,11 +217,7 @@ fn scan_number_prefix(
         return None;
     }
 
-    Some(NumberScan {
-        end,
-        normalized,
-        digits,
-    })
+    Some(NumberScan { end, normalized })
 }
 
 fn apply_decimal_separator(num: &str, decimal_sep: char) -> String {
@@ -274,6 +269,7 @@ fn apply_grouping(num: &str, grouping_sep: &str, decimal_sep: char) -> String {
     out
 }
 
+#[cfg(test)]
 fn find_numeric_beginning(s: &str) -> Option<&str> {
     let mut decimal_point_seen = false;
     if s.is_empty() {
@@ -301,6 +297,7 @@ fn find_numeric_beginning(s: &str) -> Option<&str> {
 }
 
 // finds the valid beginning part of an input string, or None.
+#[cfg(test)]
 fn find_valid_number_with_suffix(s: &str, unit: Unit) -> Option<&str> {
     let numeric_part = find_numeric_beginning(s)?;
 
@@ -327,10 +324,6 @@ fn find_valid_number_with_suffix(s: &str, unit: Unit) -> Option<&str> {
         }
         _ => Some(numeric_part),
     }
-}
-
-fn detailed_error_message(s: &str, unit: &Unit) -> Option<String> {
-    parse_number_with_suffix(s, unit).err()
 }
 
 fn parse_number_with_suffix(s: &str, unit: &Unit) -> Result<(f64, Option<Suffix>)> {
@@ -434,10 +427,6 @@ fn parse_number_with_suffix(s: &str, unit: &Unit) -> Result<(f64, Option<Suffix>
     }
 
     Ok((number, Some((raw_suffix, with_i))))
-}
-
-fn parse_suffix(s: &str, unit: &Unit) -> Result<(f64, Option<Suffix>)> {
-    parse_number_with_suffix(s, unit)
 }
 
 /// Returns the implicit precision of a number, which is the count of digits after the dot. For
@@ -655,15 +644,15 @@ fn format_string(
 
     let decimal_sep = locale_decimal_separator_char();
     let grouping_requested = options.grouping || options.format.grouping;
-    if grouping_requested && options.transform.to == Unit::None {
-        if let Some(grouping_sep) = locale_grouping_separator_string() {
-            number = apply_grouping(&number, &grouping_sep, decimal_sep);
-        } else {
-            number = apply_decimal_separator(&number, decimal_sep);
-        }
+    let grouping_sep = if grouping_requested && options.transform.to == Unit::None {
+        locale_grouping_separator_string()
     } else {
-        number = apply_decimal_separator(&number, decimal_sep);
-    }
+        None
+    };
+    number = grouping_sep.map_or_else(
+        || apply_decimal_separator(&number, decimal_sep),
+        |sep| apply_grouping(&number, &sep, decimal_sep),
+    );
 
     // bring back the suffix before applying padding
     let number_with_suffix = match &options.suffix {
@@ -887,7 +876,7 @@ mod tests {
 
     #[test]
     fn test_parse_suffix_q_r_k() {
-        let result = parse_suffix("1Q", Unit::Auto);
+        let result = parse_number_with_suffix("1Q", &Unit::Auto);
         assert!(result.is_ok());
         let (number, suffix) = result.unwrap();
         assert_eq!(number, 1.0);
@@ -896,7 +885,7 @@ mod tests {
         assert_eq!(raw_suffix as i32, RawSuffix::Q as i32);
         assert!(!with_i);
 
-        let result = parse_suffix("2R", Unit::Auto);
+        let result = parse_number_with_suffix("2R", &Unit::Auto);
         assert!(result.is_ok());
         let (number, suffix) = result.unwrap();
         assert_eq!(number, 2.0);
@@ -905,7 +894,7 @@ mod tests {
         assert_eq!(raw_suffix as i32, RawSuffix::R as i32);
         assert!(!with_i);
 
-        let result = parse_suffix("3k", Unit::Auto);
+        let result = parse_number_with_suffix("3k", &Unit::Auto);
         assert!(result.is_ok());
         let (number, suffix) = result.unwrap();
         assert_eq!(number, 3.0);
@@ -914,7 +903,7 @@ mod tests {
         assert_eq!(raw_suffix as i32, RawSuffix::K as i32);
         assert!(!with_i);
 
-        let result = parse_suffix("4Qi", Unit::Auto);
+        let result = parse_number_with_suffix("4Qi", &Unit::Auto);
         assert!(result.is_ok());
         let (number, suffix) = result.unwrap();
         assert_eq!(number, 4.0);
@@ -923,7 +912,7 @@ mod tests {
         assert_eq!(raw_suffix as i32, RawSuffix::Q as i32);
         assert!(with_i);
 
-        let result = parse_suffix("5Ri", Unit::Auto);
+        let result = parse_number_with_suffix("5Ri", &Unit::Auto);
         assert!(result.is_ok());
         let (number, suffix) = result.unwrap();
         assert_eq!(number, 5.0);
@@ -935,13 +924,13 @@ mod tests {
 
     #[test]
     fn test_parse_suffix_error_messages() {
-        let result = parse_suffix("foo", Unit::Auto);
+        let result = parse_number_with_suffix("foo", &Unit::Auto);
         assert!(result.is_err());
         let error = result.unwrap_err();
         assert!(error.contains("numfmt-error-invalid-number") || error.contains("invalid number"));
         assert!(!error.contains("invalid suffix"));
 
-        let result = parse_suffix("World", Unit::Auto);
+        let result = parse_number_with_suffix("World", &Unit::Auto);
         assert!(result.is_err());
         let error = result.unwrap_err();
         assert!(error.contains("numfmt-error-invalid-number") || error.contains("invalid number"));
@@ -949,23 +938,17 @@ mod tests {
     }
 
     #[test]
-    fn test_detailed_error_message() {
-        let result = detailed_error_message("123i", Unit::Auto);
-        assert!(result.is_some());
-        let error = result.unwrap();
+    fn test_parse_number_with_suffix_error_details() {
+        let error = parse_number_with_suffix("123i", &Unit::Auto).unwrap_err();
         assert!(error.contains("numfmt-error-invalid-suffix") || error.contains("invalid suffix"));
 
-        let result = detailed_error_message("5MF", Unit::Auto);
-        assert!(result.is_some());
-        let error = result.unwrap();
+        let error = parse_number_with_suffix("5MF", &Unit::Auto).unwrap_err();
         assert!(
             error.contains("numfmt-error-invalid-specific-suffix")
                 || error.contains("invalid suffix")
         );
 
-        let result = detailed_error_message("5KM", Unit::Auto);
-        assert!(result.is_some());
-        let error = result.unwrap();
+        let error = parse_number_with_suffix("5KM", &Unit::Auto).unwrap_err();
         assert!(
             error.contains("numfmt-error-invalid-specific-suffix")
                 || error.contains("invalid suffix")
