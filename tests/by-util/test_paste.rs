@@ -486,6 +486,6 @@ fn test_dev_zero_closed_pipe() {
     new_ucmd!()
         .arg("/dev/zero")
         .set_stdout(make_broken_pipe())
-        .succeeds()
-        .no_stderr();
+        .run()
+        .fails_silently();
 }
