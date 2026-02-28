@@ -8,16 +8,16 @@ mod error;
 
 use crate::error::ChrootError;
 use clap::{Arg, ArgAction, Command};
-use std::ffi::{CString, OsStr};
+use nix::unistd::{self, Gid, Uid};
+use std::ffi::OsStr;
 use std::io::{Error, ErrorKind};
-use std::os::unix::prelude::OsStrExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process;
 use uucore::entries::{Locate, Passwd, grp2gid, usr2gid, usr2uid};
 use uucore::error::{UResult, UUsageError};
 use uucore::fs::{MissingHandling, ResolveMode, canonicalize};
-use uucore::libc::{self, chroot, setgid, setgroups, setuid};
+use uucore::libc::{self};
 use uucore::{format_usage, show};
 
 use uucore::translate;
@@ -304,41 +304,32 @@ fn supplemental_gids(uid: libc::uid_t) -> Vec<libc::gid_t> {
 
 /// Set the supplemental group IDs for this process.
 fn set_supplemental_gids(gids: &[libc::gid_t]) -> std::io::Result<()> {
-    #[cfg(any(
-        target_vendor = "apple",
-        target_os = "freebsd",
-        target_os = "openbsd",
-        target_os = "cygwin"
-    ))]
-    let n = gids.len() as libc::c_int;
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    let n = gids.len() as libc::size_t;
-    let err = unsafe { setgroups(n, gids.as_ptr()) };
-    if err == 0 {
-        Ok(())
-    } else {
-        Err(Error::last_os_error())
+    #[cfg(not(target_vendor = "apple"))]
+    {
+        let gids: Vec<Gid> = gids.iter().copied().map(Gid::from_raw).collect();
+        return unistd::setgroups(&gids).map_err(|e| Error::from_raw_os_error(e as i32));
+    }
+
+    #[cfg(target_vendor = "apple")]
+    {
+        let n = gids.len() as libc::c_int;
+        let err = unsafe { libc::setgroups(n, gids.as_ptr()) };
+        if err == 0 {
+            Ok(())
+        } else {
+            Err(Error::last_os_error())
+        }
     }
 }
 
 /// Set the group ID of this process.
 fn set_gid(gid: libc::gid_t) -> std::io::Result<()> {
-    let err = unsafe { setgid(gid) };
-    if err == 0 {
-        Ok(())
-    } else {
-        Err(Error::last_os_error())
-    }
+    unistd::setgid(Gid::from_raw(gid)).map_err(|e| Error::from_raw_os_error(e as i32))
 }
 
 /// Set the user ID of this process.
 fn set_uid(uid: libc::uid_t) -> std::io::Result<()> {
-    let err = unsafe { setuid(uid) };
-    if err == 0 {
-        Ok(())
-    } else {
-        Err(Error::last_os_error())
-    }
+    unistd::setuid(Uid::from_raw(uid)).map_err(|e| Error::from_raw_os_error(e as i32))
 }
 
 /// What to do when the `--groups` argument is missing.
@@ -423,22 +414,10 @@ fn set_context(options: &Options) -> UResult<()> {
 }
 
 fn enter_chroot(root: &Path, skip_chdir: bool) -> UResult<()> {
-    let err = unsafe {
-        chroot(
-            CString::new(root.as_os_str().as_bytes().to_vec())
-                .map_err(|e| ChrootError::CannotEnter("root".into(), e.into()))?
-                .as_bytes_with_nul()
-                .as_ptr()
-                .cast(),
-        )
-    };
-
-    if err == 0 {
-        if !skip_chdir {
-            std::env::set_current_dir("/")?;
-        }
-        Ok(())
-    } else {
-        Err(ChrootError::CannotEnter(root.into(), Error::last_os_error()).into())
+    unistd::chroot(root)
+        .map_err(|e| ChrootError::CannotEnter(root.into(), Error::from_raw_os_error(e as i32)))?;
+    if !skip_chdir {
+        std::env::set_current_dir("/")?;
     }
+    Ok(())
 }

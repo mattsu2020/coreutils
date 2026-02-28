@@ -21,6 +21,7 @@ path = "src/chroot.rs"
 [dependencies]
 clap = { workspace = true }
 thiserror = { workspace = true }
+nix = { workspace = true, features = ["fs", "user"] }
 uucore = { workspace = true, features = ["entries", "fs"] }
 fluent = { workspace = true }
 
