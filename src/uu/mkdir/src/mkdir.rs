@@ -12,8 +12,6 @@ use clap::{Arg, ArgAction, ArgMatches, Command};
 use nix::sys::stat::{Mode, umask};
 use std::ffi::OsString;
 use std::io::{Write, stdout};
-#[cfg(unix)]
-use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 #[cfg(all(unix, target_os = "linux"))]
 use uucore::error::FromIo;
@@ -280,6 +278,8 @@ impl Drop for UmaskGuard {
 /// race condition where the directory briefly exists with umask-based permissions.
 #[cfg(unix)]
 fn create_dir_with_mode(path: &Path, mode: u32) -> std::io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+
     let _guard = UmaskGuard::set_zero();
     std::fs::DirBuilder::new().mode(mode).create(path)
 }
