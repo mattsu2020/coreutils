@@ -424,10 +424,7 @@ fn test_fmt_split_only_line_limit_boundary_no_extra_blank() {
     let result = new_ucmd!().arg("-s").pipe_in(input).succeeds();
     let mut lines = result.stdout_str().lines();
 
-    assert_eq!(
-        lines.next().map(|line| line.len()),
-        Some(FMT_TEST_LINE_LIMIT)
-    );
+    assert_eq!(lines.next().map(str::len), Some(FMT_TEST_LINE_LIMIT));
     assert_eq!(lines.next(), Some("b"));
     assert_eq!(lines.next(), None);
 }
@@ -440,14 +437,8 @@ fn test_fmt_split_only_multiple_line_limit_chunks_no_extra_blank() {
     let result = new_ucmd!().arg("-s").pipe_in(input).succeeds();
     let mut lines = result.stdout_str().lines();
 
-    assert_eq!(
-        lines.next().map(|line| line.len()),
-        Some(FMT_TEST_LINE_LIMIT)
-    );
-    assert_eq!(
-        lines.next().map(|line| line.len()),
-        Some(FMT_TEST_LINE_LIMIT)
-    );
+    assert_eq!(lines.next().map(str::len), Some(FMT_TEST_LINE_LIMIT));
+    assert_eq!(lines.next().map(str::len), Some(FMT_TEST_LINE_LIMIT));
     assert_eq!(lines.next(), Some("b"));
     assert_eq!(lines.next(), None);
 }
@@ -460,10 +451,7 @@ fn test_fmt_default_mode_line_limit_boundary_no_extra_blank() {
     let result = new_ucmd!().pipe_in(input).succeeds();
     let mut lines = result.stdout_str().lines();
 
-    assert_eq!(
-        lines.next().map(|line| line.len()),
-        Some(FMT_TEST_LINE_LIMIT)
-    );
+    assert_eq!(lines.next().map(str::len), Some(FMT_TEST_LINE_LIMIT));
     assert_eq!(lines.next(), Some("b"));
     assert_eq!(lines.next(), None);
 }
