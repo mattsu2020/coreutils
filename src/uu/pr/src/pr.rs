@@ -10,7 +10,7 @@ use clap::{Arg, ArgAction, ArgMatches, Command};
 use itertools::Itertools;
 use regex::Regex;
 use std::fs::metadata;
-use std::io::{stderr, stdin, stdout, Read, Write};
+use std::io::{Read, Write, stderr, stdin, stdout};
 use std::str::Utf8Error;
 use std::string::FromUtf8Error;
 use std::time::SystemTime;
@@ -19,7 +19,7 @@ use thiserror::Error;
 use uucore::display::Quotable;
 use uucore::error::UResult;
 use uucore::format_usage;
-use uucore::time::{format, format_system_time, FormatSystemTimeFallback};
+use uucore::time::{FormatSystemTimeFallback, format, format_system_time};
 use uucore::translate;
 
 const TAB: char = '\t';
