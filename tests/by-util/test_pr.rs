@@ -585,6 +585,30 @@ fn test_streaming_char_device_from_infinite_source() {
     child.wait().unwrap().fails_silently();
 }
 
+#[cfg(unix)]
+#[test]
+fn test_streaming_fifo_with_invalid_utf8_fails() {
+    use std::time::Duration;
+
+    let (at, mut ucmd) = at_and_ucmd!();
+    let fifo_path = at.plus_as_string("fifo");
+
+    nix::unistd::mkfifo(fifo_path.as_str(), nix::sys::stat::Mode::S_IRWXU).unwrap();
+
+    let writer_path = at.plus("fifo");
+    let writer = std::thread::spawn(move || {
+        std::fs::write(writer_path, [0xFF_u8, b'\n']).unwrap();
+    });
+
+    ucmd.timeout(Duration::from_secs(5));
+    ucmd.arg("fifo")
+        .fails_with_code(1)
+        .stdout_is("")
+        .stderr_contains("invalid utf-8 sequence");
+
+    writer.join().unwrap();
+}
+
 #[test]
 fn test_b_flag_backwards_compat() {
     // -b is a no-op for backwards compatibility (column-down is now the default)
