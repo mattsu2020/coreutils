@@ -26,6 +26,8 @@ use uucore::translate;
 use uucore::uio_error;
 use walkdir::{DirEntry, WalkDir};
 
+#[cfg(all(feature = "selinux", target_os = "linux"))]
+use crate::set_selinux_context;
 use crate::{
     CopyMode, CopyResult, CpError, Options, aligned_ancestors, context_for, copy_attributes,
     copy_file,
@@ -94,7 +96,7 @@ fn get_local_to_root_parent(
 /// Given an iterator, return all its items except the last.
 fn skip_last<T>(mut iter: impl Iterator<Item = T>) -> impl Iterator<Item = T> {
     let last = iter.next();
-    iter.scan(last, |state, item| state.replace(item))
+    iter.scan(last, Option::replace)
 }
 
 /// Paths that are invariant throughout the traversal when copying a directory.
@@ -120,17 +122,18 @@ impl<'a> Context<'a> {
         let current_dir = env::current_dir()?;
         let root_path = current_dir.join(root);
         let target_is_file = target.is_file();
-        let root_parent = if target.exists() && !root.to_str().unwrap().ends_with("/.") {
-            root_path.parent().map(|p| p.to_path_buf())
-        } else if root == Path::new(".") && target.is_dir() {
-            // Special case: when copying current directory (.) to an existing directory,
-            // we don't want to use the parent path as root_parent because we want to
-            // copy the contents of the current directory directly into the target directory,
-            // not create a subdirectory with the current directory's name.
-            None
-        } else {
-            Some(root_path)
-        };
+        let root_parent =
+            if target.exists() && !root.as_os_str().as_encoded_bytes().ends_with(b"/.") {
+                root_path.parent().map(ToOwned::to_owned)
+            } else if root == Path::new(".") && target.is_dir() {
+                // Special case: when copying current directory (.) to an existing directory,
+                // we don't want to use the parent path as root_parent because we want to
+                // copy the contents of the current directory directly into the target directory,
+                // not create a subdirectory with the current directory's name.
+                None
+            } else {
+                Some(root_path)
+            };
         Ok(Self {
             current_dir,
             root_parent,
@@ -492,6 +495,7 @@ pub(crate) fn copy_directory(
                             &entry.local_to_target,
                             &options.attributes,
                             false,
+                            options.set_selinux_context,
                         )?;
                         continue;
                     }
@@ -534,6 +538,7 @@ pub(crate) fn copy_directory(
                                 &entry.local_to_target,
                                 &options.attributes,
                                 false,
+                                options.set_selinux_context,
                             )?;
                         }
                     }
@@ -550,7 +555,18 @@ pub(crate) fn copy_directory(
     // Fix permissions for all directories we created
     // This ensures that even sibling directories get their permissions fixed
     for dir in dirs_needing_permissions {
-        copy_attributes(&dir.source, &dir.dest, &options.attributes, dir.was_created)?;
+        copy_attributes(
+            &dir.source,
+            &dir.dest,
+            &options.attributes,
+            dir.was_created,
+            options.set_selinux_context,
+        )?;
+
+        #[cfg(all(feature = "selinux", target_os = "linux"))]
+        if options.set_selinux_context {
+            set_selinux_context(&dir.dest, options.context.as_ref())?;
+        }
     }
 
     // Also fix permissions for parent directories,
@@ -559,7 +575,18 @@ pub(crate) fn copy_directory(
         let dest = target.join(root.file_name().unwrap());
         for (x, y) in aligned_ancestors(root, dest.as_path()) {
             if let Ok(src) = canonicalize(x, MissingHandling::Normal, ResolveMode::Physical) {
-                copy_attributes(&src, y, &options.attributes, false)?;
+                copy_attributes(
+                    &src,
+                    y,
+                    &options.attributes,
+                    false,
+                    options.set_selinux_context,
+                )?;
+
+                #[cfg(all(feature = "selinux", target_os = "linux"))]
+                if options.set_selinux_context {
+                    set_selinux_context(y, options.context.as_ref())?;
+                }
             }
         }
     }
