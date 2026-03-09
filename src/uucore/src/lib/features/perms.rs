@@ -5,7 +5,7 @@
 
 //! Common functions to manage permissions
 
-// spell-checker:ignore (jargon) TOCTOU fchownat fchown
+// spell-checker:ignore (jargon) TOCTOU fchownat fchown FDCWD
 
 use crate::display::Quotable;
 use crate::error::{UResult, USimpleError, strip_errno};
