@@ -15,6 +15,8 @@ use crate::show_error;
 use clap::{Arg, ArgMatches, Command};
 
 use libc::{gid_t, uid_t};
+use nix::fcntl::{AT_FDCWD, AtFlags};
+use nix::unistd::{Gid, Uid, chown as nix_chown, fchownat};
 use options::traverse;
 use std::ffi::OsString;
 
@@ -24,13 +26,10 @@ use walkdir::WalkDir;
 #[cfg(target_os = "linux")]
 use crate::features::safe_traversal::{DirFd, SymlinkBehavior};
 
-use std::ffi::CString;
 use std::fs::Metadata;
 use std::io::Error as IOError;
 use std::io::Result as IOResult;
 use std::os::unix::fs::MetadataExt;
-
-use std::os::unix::ffi::OsStrExt;
 use std::path::{MAIN_SEPARATOR, Path};
 
 /// The various level of verbosity
@@ -60,19 +59,14 @@ impl Default for Verbosity {
 /// Actually perform the change of owner on a path
 fn chown<P: AsRef<Path>>(path: P, uid: uid_t, gid: gid_t, follow: bool) -> IOResult<()> {
     let path = path.as_ref();
-    let s = CString::new(path.as_os_str().as_bytes()).unwrap();
-    let ret = unsafe {
-        if follow {
-            libc::chown(s.as_ptr(), uid, gid)
-        } else {
-            libc::lchown(s.as_ptr(), uid, gid)
-        }
-    };
-    if ret == 0 {
-        Ok(())
+    let uid = Some(Uid::from_raw(uid));
+    let gid = Some(Gid::from_raw(gid));
+    let result = if follow {
+        nix_chown(path, uid, gid)
     } else {
-        Err(IOError::last_os_error())
-    }
+        fchownat(AT_FDCWD, path, uid, gid, AtFlags::AT_SYMLINK_NOFOLLOW)
+    };
+    result.map_err(|e| IOError::from_raw_os_error(e as i32))
 }
 
 /// Perform the change of owner on a path
