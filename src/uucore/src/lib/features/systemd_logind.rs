@@ -12,11 +12,10 @@
 //! When the systemd-logind feature is enabled and systemd is available,
 //! this will be used instead of traditional utmp files.
 
-use std::ffi::CStr;
-use std::mem::MaybeUninit;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::error::{UResult, USimpleError};
+use nix::unistd::{Uid, User};
 
 /// FFI bindings for libsystemd login and D-Bus functions
 mod ffi {
@@ -357,38 +356,11 @@ pub fn read_login_records() -> UResult<Vec<SystemdLoginRecord>> {
         };
 
         // Get username from UID
-        let user = unsafe {
-            let mut passwd = MaybeUninit::<libc::passwd>::uninit();
-
-            // Get recommended buffer size, fall back if indeterminate
-            let buf_size = {
-                let size = libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX);
-                if size == -1 {
-                    16384 // Value was indeterminate, use fallback from getpwuid_r man page
-                } else {
-                    size as usize
-                }
-            };
-            let mut buf = vec![0u8; buf_size];
-            let mut result: *mut libc::passwd = std::ptr::null_mut();
-
-            let ret = libc::getpwuid_r(
-                uid,
-                passwd.as_mut_ptr(),
-                buf.as_mut_ptr().cast(),
-                buf.len(),
-                &raw mut result,
-            );
-
-            if ret == 0 && !result.is_null() {
-                let passwd = passwd.assume_init();
-                CStr::from_ptr(passwd.pw_name)
-                    .to_string_lossy()
-                    .into_owned()
-            } else {
-                format!("{uid}") // fallback to UID if username not found
-            }
-        };
+        let user = User::from_uid(Uid::from_raw(uid))
+            .ok()
+            .flatten()
+            .map(|user| user.name)
+            .unwrap_or_else(|| format!("{uid}"));
 
         // Get start time using safe wrapper, fallback to epoch if unavailable
         let start_time = login::get_session_start_time(&session_id).map_or(UNIX_EPOCH, |usec| {
