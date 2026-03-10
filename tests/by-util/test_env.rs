@@ -908,8 +908,7 @@ fn test_env_arg_ignore_signal_realtime_offset() {
     let rtmin = libc::SIGRTMIN();
     assert!(libc::SIGRTMAX() > rtmin);
 
-    let signal = format!("RTMIN+1");
-    let mut target = Target::new(&[signal.as_str()]);
+    let mut target = Target::new(&["RTMIN+1"]);
     target.send_signal_value(rtmin + 1);
     assert!(target.is_alive());
 }
