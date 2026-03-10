@@ -359,8 +359,7 @@ pub fn read_login_records() -> UResult<Vec<SystemdLoginRecord>> {
         let user = User::from_uid(Uid::from_raw(uid))
             .ok()
             .flatten()
-            .map(|user| user.name)
-            .unwrap_or_else(|| format!("{uid}"));
+            .map_or_else(|| format!("{uid}"), |user| user.name);
 
         // Get start time using safe wrapper, fallback to epoch if unavailable
         let start_time = login::get_session_start_time(&session_id).map_or(UNIX_EPOCH, |usec| {
