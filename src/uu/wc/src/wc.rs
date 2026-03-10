@@ -16,7 +16,7 @@ use std::{
     env,
     ffi::{OsStr, OsString},
     fs::{self, File},
-    io::{self, Write, stderr},
+    io::{self, BufRead, Write, stderr},
     iter,
     path::{Path, PathBuf},
 };
@@ -24,7 +24,7 @@ use std::{
 use clap::{Arg, ArgAction, ArgMatches, Command, builder::ValueParser};
 use thiserror::Error;
 use unicode_width::UnicodeWidthChar;
-use utf8::{BufReadDecoder, BufReadDecoderError};
+use utf8::DecodeResult;
 use uucore::{display::Quotable, translate};
 
 use uucore::{
@@ -570,7 +570,59 @@ fn word_count_from_reader<T: WordCountable>(
     }
 }
 
-fn process_chunk<
+#[inline]
+fn process_char<
+    const SHOW_CHARS: bool,
+    const SHOW_LINES: bool,
+    const SHOW_MAX_LINE_LENGTH: bool,
+    const SHOW_WORDS: bool,
+>(
+    total: &mut WordCount,
+    ch: char,
+    current_len: &mut usize,
+    in_word: &mut bool,
+    posixly_correct: bool,
+) {
+    if SHOW_WORDS {
+        let is_space = if posixly_correct {
+            matches!(ch, '\t'..='\r' | ' ')
+        } else {
+            ch.is_whitespace()
+        };
+
+        if is_space {
+            *in_word = false;
+        } else if !(*in_word) {
+            // This also counts control characters! (As of GNU coreutils 9.5)
+            *in_word = true;
+            total.words += 1;
+        }
+    }
+    if SHOW_MAX_LINE_LENGTH {
+        match ch {
+            '\n' | '\r' | '\x0c' => {
+                total.max_line_length = max(*current_len, total.max_line_length);
+                *current_len = 0;
+            }
+            '\t' => {
+                *current_len -= *current_len % 8;
+                *current_len += 8;
+            }
+            _ => {
+                *current_len += ch.width().unwrap_or(0);
+            }
+        }
+    }
+    if SHOW_LINES && ch == '\n' {
+        total.lines += 1;
+    }
+    if SHOW_CHARS {
+        total.chars += 1;
+    }
+}
+
+#[inline]
+fn process_text_chunk<
     const SHOW_CHARS: bool,
     const SHOW_LINES: bool,
     const SHOW_MAX_LINE_LENGTH: bool,
@@ -583,64 +635,77 @@ fn process_chunk<
     posixly_correct: bool,
 ) {
     for ch in text.chars() {
+        process_char::<SHOW_CHARS, SHOW_LINES, SHOW_MAX_LINE_LENGTH, SHOW_WORDS>(
+            total,
+            ch,
+            current_len,
+            in_word,
+            posixly_correct,
+        );
+    }
+    total.bytes += text.len();
+}
+
+#[inline]
+fn process_ascii_chunk<
+    const SHOW_CHARS: bool,
+    const SHOW_LINES: bool,
+    const SHOW_MAX_LINE_LENGTH: bool,
+    const SHOW_WORDS: bool,
+>(
+    total: &mut WordCount,
+    bytes: &[u8],
+    current_len: &mut usize,
+    in_word: &mut bool,
+    posixly_correct: bool,
+) {
+    for &byte in bytes {
         if SHOW_WORDS {
             let is_space = if posixly_correct {
-                matches!(ch, '\t'..='\r' | ' ')
+                matches!(byte, b'\t'..=b'\r' | b' ')
             } else {
-                ch.is_whitespace()
+                matches!(byte, b'\t'..=b'\r' | b' ')
             };
 
             if is_space {
                 *in_word = false;
             } else if !(*in_word) {
-                // This also counts control characters! (As of GNU coreutils 9.5)
                 *in_word = true;
                 total.words += 1;
             }
         }
         if SHOW_MAX_LINE_LENGTH {
-            match ch {
-                '\n' | '\r' | '\x0c' => {
+            match byte {
+                b'\n' | b'\r' | b'\x0c' => {
                     total.max_line_length = max(*current_len, total.max_line_length);
                     *current_len = 0;
                 }
-                '\t' => {
+                b'\t' => {
                     *current_len -= *current_len % 8;
                     *current_len += 8;
                 }
                 _ => {
-                    *current_len += ch.width().unwrap_or(0);
+                    *current_len += 1;
                 }
             }
         }
-        if SHOW_LINES && ch == '\n' {
+        if SHOW_LINES && byte == b'\n' {
             total.lines += 1;
         }
-        if SHOW_CHARS {
-            total.chars += 1;
-        }
     }
-    total.bytes += text.len();
-
-    total.max_line_length = max(*current_len, total.max_line_length);
+    if SHOW_CHARS {
+        total.chars += bytes.len();
+    }
+    total.bytes += bytes.len();
 }
 
-fn handle_error(
-    error: BufReadDecoderError<'_>,
-    total: &mut WordCount,
-    in_word: &mut bool,
-) -> Option<io::Error> {
-    match error {
-        BufReadDecoderError::InvalidByteSequence(bytes) => {
-            total.bytes += bytes.len();
-            if !(*in_word) {
-                *in_word = true;
-                total.words += 1;
-            }
-        }
-        BufReadDecoderError::Io(e) => return Some(e),
+#[inline]
+fn process_invalid_bytes(total: &mut WordCount, in_word: &mut bool, bytes: usize) {
+    total.bytes += bytes;
+    if !(*in_word) {
+        *in_word = true;
+        total.words += 1;
     }
-    None
 }
 
 fn word_count_from_reader_specialized<
@@ -653,14 +718,31 @@ fn word_count_from_reader_specialized<
     reader: T,
 ) -> (WordCount, Option<io::Error>) {
     let mut total = WordCount::default();
-    let mut reader = BufReadDecoder::new(reader.buffered());
+    let mut reader = reader.buffered();
     let mut in_word = false;
     let mut current_len = 0;
     let posixly_correct = env::var_os("POSIXLY_CORRECT").is_some();
-    while let Some(chunk) = reader.next_strict() {
-        match chunk {
-            Ok(text) => {
-                process_chunk::<SHOW_CHARS, SHOW_LINES, SHOW_MAX_LINE_LENGTH, SHOW_WORDS>(
+    let mut pending = [0_u8; 4];
+    let mut pending_len = 0_usize;
+
+    loop {
+        let buf = match reader.fill_buf() {
+            Ok(buf) => buf,
+            Err(e) => return (total, Some(e)),
+        };
+        if buf.is_empty() {
+            if pending_len > 0 {
+                process_invalid_bytes(&mut total, &mut in_word, pending_len);
+            }
+            total.max_line_length = max(current_len, total.max_line_length);
+            return (total, None);
+        }
+
+        if pending_len == 0 && buf.is_ascii() {
+            let ascii_len = buf.len();
+            {
+                let text = unsafe { std::str::from_utf8_unchecked(buf) };
+                process_text_chunk::<SHOW_CHARS, SHOW_LINES, SHOW_MAX_LINE_LENGTH, SHOW_WORDS>(
                     &mut total,
                     text,
                     &mut current_len,
@@ -668,15 +750,92 @@ fn word_count_from_reader_specialized<
                     posixly_correct,
                 );
             }
-            Err(e) => {
-                if let Some(e) = handle_error(e, &mut total, &mut in_word) {
-                    return (total, Some(e));
+            total.max_line_length = max(current_len, total.max_line_length);
+            reader.consume(ascii_len);
+            continue;
+        }
+
+        let mut consumed = 0_usize;
+        if pending_len > 0 {
+            let needed = utf8::expected_utf8_len(pending[0])
+                .expect("pending bytes always start with a valid lead byte")
+                - pending_len;
+            let to_copy = needed.min(buf.len());
+            pending[pending_len..pending_len + to_copy].copy_from_slice(&buf[..to_copy]);
+            let previous_pending_len = pending_len;
+            pending_len += to_copy;
+            match utf8::decode_char(&pending[..pending_len]) {
+                DecodeResult::Char(ch, bytes) => {
+                    process_char::<SHOW_CHARS, SHOW_LINES, SHOW_MAX_LINE_LENGTH, SHOW_WORDS>(
+                        &mut total,
+                        ch,
+                        &mut current_len,
+                        &mut in_word,
+                        posixly_correct,
+                    );
+                    total.bytes += bytes;
+                    consumed = bytes.saturating_sub(previous_pending_len);
+                    pending_len = 0;
+                }
+                DecodeResult::Invalid(bytes) => {
+                    process_invalid_bytes(&mut total, &mut in_word, bytes);
+                    consumed = bytes.saturating_sub(previous_pending_len);
+                    pending_len = 0;
+                }
+                DecodeResult::Incomplete => {
+                    reader.consume(to_copy);
+                    total.max_line_length = max(current_len, total.max_line_length);
+                    continue;
                 }
             }
         }
-    }
 
-    (total, None)
+        let mut idx = consumed;
+        while idx < buf.len() {
+            if buf[idx].is_ascii() {
+                let ascii_start = idx;
+                idx += 1;
+                while idx < buf.len() && buf[idx].is_ascii() {
+                    idx += 1;
+                }
+                process_ascii_chunk::<SHOW_CHARS, SHOW_LINES, SHOW_MAX_LINE_LENGTH, SHOW_WORDS>(
+                    &mut total,
+                    &buf[ascii_start..idx],
+                    &mut current_len,
+                    &mut in_word,
+                    posixly_correct,
+                );
+                continue;
+            }
+
+            match utf8::decode_char(&buf[idx..]) {
+                DecodeResult::Char(ch, bytes) => {
+                    process_char::<SHOW_CHARS, SHOW_LINES, SHOW_MAX_LINE_LENGTH, SHOW_WORDS>(
+                        &mut total,
+                        ch,
+                        &mut current_len,
+                        &mut in_word,
+                        posixly_correct,
+                    );
+                    total.bytes += bytes;
+                    idx += bytes;
+                }
+                DecodeResult::Invalid(bytes) => {
+                    process_invalid_bytes(&mut total, &mut in_word, bytes);
+                    idx += bytes;
+                }
+                DecodeResult::Incomplete => {
+                    let remainder = &buf[idx..];
+                    pending[..remainder.len()].copy_from_slice(remainder);
+                    pending_len = remainder.len();
+                    idx = buf.len();
+                }
+            }
+        }
+
+        reader.consume(idx);
+        total.max_line_length = max(current_len, total.max_line_length);
+    }
 }
 
 enum CountResult {
