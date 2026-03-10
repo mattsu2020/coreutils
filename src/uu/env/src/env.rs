@@ -3,7 +3,7 @@
 // For the full copyright and license information, please view the LICENSE
 // file that was distributed with this source code.
 
-// spell-checker:ignore (ToDO) chdir progname subcommand subcommands unsets setenv putenv spawnp SIGSEGV SIGBUS sigaction Sigmask sigprocmask
+// spell-checker:ignore (ToDO) chdir progname subcommand subcommands unsets setenv putenv spawnp SIGSEGV SIGBUS sigaction Sigmask sigprocmask sighandler sigset sigemptyset sigaddset
 
 pub mod native_int_str;
 pub mod split_iterator;
@@ -1102,10 +1102,10 @@ fn block_signal(sig_value: usize) -> io::Result<()> {
     let mut set = unsafe { set.assume_init() };
 
     // SAFETY: sigaddset and sigprocmask accept any runtime signal number supported by libc.
-    if unsafe { libc::sigaddset(&mut set, sig_value as libc::c_int) } != 0 {
+    if unsafe { libc::sigaddset(&raw mut set, sig_value as libc::c_int) } != 0 {
         return Err(io::Error::last_os_error());
     }
-    if unsafe { libc::sigprocmask(libc::SIG_BLOCK, &set, std::ptr::null_mut()) } != 0 {
+    if unsafe { libc::sigprocmask(libc::SIG_BLOCK, &raw const set, std::ptr::null_mut()) } != 0 {
         return Err(io::Error::last_os_error());
     }
     Ok(())
