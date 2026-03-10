@@ -13,8 +13,6 @@ use nix::sys::signal::Signal;
 use regex::Regex;
 use std::env;
 use std::path::Path;
-#[cfg(unix)]
-use std::process::Command;
 use tempfile::tempdir;
 use uutests::new_ucmd;
 #[cfg(unix)]
@@ -44,14 +42,11 @@ impl Target {
         Self { child }
     }
     fn send_signal(&mut self, signal: Signal) {
-        let _ = Command::new("kill")
-            .args(&[
-                format!("-{}", signal as i32),
-                format!("{}", self.child.id()),
-            ])
-            .spawn()
-            .expect("failed to send signal")
-            .wait();
+        self.send_signal_value(signal as i32);
+    }
+    fn send_signal_value(&mut self, signal: i32) {
+        let result = unsafe { libc::kill(self.child.id() as libc::pid_t, signal) };
+        assert_eq!(result, 0, "failed to send signal {signal}");
         self.child.delay(100);
     }
     fn is_alive(&mut self) -> bool {
@@ -843,6 +838,15 @@ fn test_env_arg_ignore_signal_invalid_signals() {
 }
 
 #[test]
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn test_env_arg_ignore_signal_invalid_realtime_offset() {
+    new_ucmd!()
+        .args(&["--ignore-signal=RTMIN+9999", "true"])
+        .fails_with_code(125)
+        .stderr_contains("env: 'RTMIN+9999': invalid signal");
+}
+
+#[test]
 #[cfg(unix)]
 fn test_env_arg_ignore_signal_special_signals() {
     let ts = TestScenario::new(util_name!());
@@ -899,6 +903,18 @@ fn test_env_arg_ignore_signal_valid_signals() {
 }
 
 #[test]
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn test_env_arg_ignore_signal_realtime_offset() {
+    let rtmin = libc::SIGRTMIN();
+    assert!(libc::SIGRTMAX() > rtmin);
+
+    let signal = format!("RTMIN+1");
+    let mut target = Target::new(&[signal.as_str()]);
+    target.send_signal_value(rtmin + 1);
+    assert!(target.is_alive());
+}
+
+#[test]
 #[cfg(unix)]
 fn test_env_arg_ignore_signal_empty() {
     let ts = TestScenario::new(util_name!());
@@ -951,6 +967,30 @@ fn test_env_list_signal_handling_reports_ignore() {
     let stderr = result.stderr_str();
     assert!(
         stderr.contains("INT") && stderr.contains("IGNORE"),
+        "unexpected signal listing: {stderr}"
+    );
+}
+
+#[test]
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn test_env_list_signal_handling_reports_realtime_offsets() {
+    let result = new_ucmd!()
+        .env("PATH", PATH)
+        .args(&["--block-signal=RTMIN+1", "--list-signal-handling", "true"])
+        .succeeds();
+    let stderr = result.stderr_str();
+    assert!(
+        stderr.contains("RTMIN+1") && stderr.contains("BLOCK"),
+        "unexpected signal listing: {stderr}"
+    );
+
+    let result = new_ucmd!()
+        .env("PATH", PATH)
+        .args(&["--default-signal=RTMAX-1", "--list-signal-handling", "true"])
+        .succeeds();
+    let stderr = result.stderr_str();
+    assert!(
+        stderr.contains("RTMAX-1") && stderr.contains("DEFAULT"),
         "unexpected signal listing: {stderr}"
     );
 }

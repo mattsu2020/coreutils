@@ -426,6 +426,44 @@ fn realtime_signal_bounds() -> Option<(usize, usize)> {
     None
 }
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn is_realtime_signal_value(signal_value: usize) -> bool {
+    realtime_signal_bounds().is_some_and(|(rtmin, rtmax)| (rtmin..=rtmax).contains(&signal_value))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+fn is_realtime_signal_value(_signal_value: usize) -> bool {
+    false
+}
+
+fn parse_realtime_signal_spec(spec_upcase: &str) -> Option<usize> {
+    let signal_name = spec_upcase.trim_start_matches("SIG");
+    let (rtmin, rtmax) = realtime_signal_bounds()?;
+
+    match signal_name {
+        "RTMIN" => Some(rtmin),
+        "RTMAX" => Some(rtmax),
+        _ => {
+            let (base, offset, add) = if let Some(offset) = signal_name.strip_prefix("RTMIN+") {
+                (rtmin, offset, true)
+            } else if let Some(offset) = signal_name.strip_prefix("RTMAX-") {
+                (rtmax, offset, false)
+            } else {
+                return None;
+            };
+
+            let offset = offset.parse::<usize>().ok()?;
+            let value = if add {
+                base.checked_add(offset)?
+            } else {
+                base.checked_sub(offset)?
+            };
+
+            is_realtime_signal_value(value).then_some(value)
+        }
+    }
+}
+
 /// Returns the largest signal number that list-style interfaces should accept.
 pub fn signal_number_upper_bound() -> usize {
     let base = ALL_SIGNALS.len() - 1;
@@ -462,12 +500,50 @@ pub fn signal_list_value_by_name_or_number(spec: &str) -> Option<usize> {
         return Some(value);
     }
 
-    let signal_name = spec_upcase.trim_start_matches("SIG");
-    realtime_signal_bounds().and_then(|(rtmin, rtmax)| match signal_name {
-        "RTMIN" => Some(rtmin),
-        "RTMAX" => Some(rtmax),
-        _ => None,
-    })
+    parse_realtime_signal_spec(&spec_upcase)
+}
+
+/// Returns the signal value for signal-action interfaces.
+pub fn signal_action_value_by_name_or_number(spec: &str) -> Option<usize> {
+    let spec_upcase = spec.to_uppercase();
+
+    if let Ok(value) = spec_upcase.parse::<usize>() {
+        return (is_signal(value) || is_realtime_signal_value(value)).then_some(value);
+    }
+
+    if let Some(value) = signal_by_name_or_value(&spec_upcase) {
+        return Some(value);
+    }
+
+    parse_realtime_signal_spec(&spec_upcase)
+}
+
+/// Returns the display name for signal-action interfaces.
+pub fn signal_action_name_by_value(signal_value: usize) -> Option<String> {
+    if let Some(signal_name) = signal_name_by_value(signal_value) {
+        return Some(signal_name.to_string());
+    }
+
+    let (rtmin, rtmax) = realtime_signal_bounds()?;
+    if !(rtmin..=rtmax).contains(&signal_value) {
+        return None;
+    }
+
+    if signal_value == rtmin {
+        return Some("RTMIN".to_string());
+    }
+    if signal_value == rtmax {
+        return Some("RTMAX".to_string());
+    }
+
+    let from_min = signal_value - rtmin;
+    let from_max = rtmax - signal_value;
+
+    if from_min <= from_max {
+        Some(format!("RTMIN+{from_min}"))
+    } else {
+        Some(format!("RTMAX-{from_max}"))
+    }
 }
 
 /// Restores SIGPIPE to default behavior (process terminates on broken pipe).
@@ -746,6 +822,49 @@ fn linux_realtime_signal_names_resolve_to_runtime_values() {
     assert_eq!(signal_list_value_by_name_or_number("RTMAX"), Some(rtmax));
     assert_eq!(signal_list_value_by_name_or_number("SIGRTMIN"), Some(rtmin));
     assert_eq!(signal_list_value_by_name_or_number("SIGRTMAX"), Some(rtmax));
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[test]
+fn linux_realtime_signal_offset_names_resolve_to_runtime_values() {
+    let (rtmin, rtmax) = realtime_signal_bounds().unwrap();
+
+    if rtmax > rtmin {
+        assert_eq!(
+            signal_list_value_by_name_or_number("RTMIN+1"),
+            Some(rtmin + 1)
+        );
+        assert_eq!(
+            signal_action_value_by_name_or_number("SIGRTMAX-1"),
+            Some(rtmax - 1)
+        );
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[test]
+fn linux_realtime_signal_offset_names_are_formatted() {
+    let (rtmin, rtmax) = realtime_signal_bounds().unwrap();
+
+    assert_eq!(
+        signal_action_name_by_value(rtmin),
+        Some("RTMIN".to_string())
+    );
+    assert_eq!(
+        signal_action_name_by_value(rtmax),
+        Some("RTMAX".to_string())
+    );
+
+    if rtmax > rtmin {
+        assert_eq!(
+            signal_action_name_by_value(rtmin + 1),
+            Some("RTMIN+1".to_string())
+        );
+        assert_eq!(
+            signal_action_name_by_value(rtmax - 1),
+            Some("RTMAX-1".to_string())
+        );
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]

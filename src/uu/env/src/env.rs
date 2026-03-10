@@ -20,11 +20,6 @@ use native_int_str::{
 #[cfg(unix)]
 use nix::libc;
 #[cfg(unix)]
-use nix::sys::signal::{
-    SigHandler::{SigDfl, SigIgn},
-    SigSet, SigmaskHow, Signal, signal, sigprocmask,
-};
-#[cfg(unix)]
 use nix::unistd::execvp;
 use std::borrow::Cow;
 #[cfg(unix)]
@@ -43,7 +38,9 @@ use uucore::display::{Quotable, print_all_env_vars};
 use uucore::error::{ExitCode, UError, UResult, USimpleError, UUsageError};
 use uucore::line_ending::LineEnding;
 #[cfg(unix)]
-use uucore::signals::{signal_by_name_or_value, signal_name_by_value, signal_number_upper_bound};
+use uucore::signals::{
+    signal_action_name_by_value, signal_action_value_by_name_or_number, signal_number_upper_bound,
+};
 use uucore::translate;
 use uucore::{format_usage, show_warning};
 
@@ -145,8 +142,7 @@ fn parse_program_opt<'a>(opts: &mut Options<'a>, opt: &'a OsStr) -> UResult<()> 
 
 #[cfg(unix)]
 fn parse_signal_value(signal_name: &str) -> UResult<usize> {
-    let signal_name_upcase = signal_name.to_uppercase();
-    let optional_signal_value = signal_by_name_or_value(&signal_name_upcase);
+    let optional_signal_value = signal_action_value_by_name_or_number(signal_name);
     let error = USimpleError::new(
         125,
         translate!("env-error-invalid-signal", "signal" => signal_name.quote()),
@@ -290,19 +286,6 @@ fn build_signal_request(matches: &clap::ArgMatches, option: &str) -> UResult<Sig
     }
 
     Ok(request)
-}
-
-#[cfg(unix)]
-fn signal_from_value(sig_value: usize) -> UResult<Signal> {
-    Signal::try_from(sig_value as i32).map_err(|_| {
-        USimpleError::new(
-            125,
-            translate!(
-                "env-error-invalid-signal",
-                "signal" => sig_value.to_string().quote()
-            ),
-        )
-    })
 }
 
 fn load_config_file(opts: &mut Options) -> UResult<()> {
@@ -1047,15 +1030,19 @@ fn apply_signal_action<F>(
     signal_fn: F,
 ) -> UResult<()>
 where
-    F: Fn(Signal) -> UResult<()>,
+    F: Fn(usize) -> io::Result<()>,
 {
     request.for_each_signal(|sig_value, explicit| {
-        // On some platforms ALL_SIGNALS may contain values that are not valid in libc.
-        // Skip those invalid ones and continue (GNU env also ignores undefined signals).
-        let Ok(sig) = signal_from_value(sig_value) else {
+        // Skip signal numbers that are neither named nor Linux realtime signals.
+        if signal_action_name_by_value(sig_value).is_none() {
             return Ok(());
-        };
-        signal_fn(sig)?;
+        }
+        if let Err(err) = signal_fn(sig_value) {
+            if !explicit && err.raw_os_error() == Some(libc::EINVAL) {
+                return Ok(());
+            }
+            return Err(signal_action_error(sig_value, err));
+        }
         log.record(sig_value, action_kind, explicit);
 
         // Set environment variable to communicate to Rust child processes
@@ -1071,43 +1058,55 @@ where
 }
 
 #[cfg(unix)]
-fn ignore_signal(sig: Signal) -> UResult<()> {
-    // SAFETY: This is safe because we write the handler for each signal only once, and therefore "the current handler is the default", as the documentation requires it.
-    let result = unsafe { signal(sig, SigIgn) };
-    if let Err(err) = result {
-        return Err(USimpleError::new(
-            125,
-            translate!("env-error-failed-set-signal-action", "signal" => (sig as i32), "error" => err.desc()),
-        ));
+fn signal_action_error(sig_value: usize, err: io::Error) -> Box<dyn UError> {
+    USimpleError::new(
+        125,
+        translate!(
+            "env-error-failed-set-signal-action",
+            "signal" => (sig_value as i32),
+            "error" => err
+        ),
+    )
+}
+
+#[cfg(unix)]
+fn set_signal_handler(sig_value: usize, handler: libc::sighandler_t) -> io::Result<()> {
+    // SAFETY: libc::signal accepts any signal number representable on the host.
+    let result = unsafe { libc::signal(sig_value as libc::c_int, handler) };
+    if result == libc::SIG_ERR {
+        return Err(io::Error::last_os_error());
     }
     Ok(())
 }
 
 #[cfg(unix)]
-fn reset_signal(sig: Signal) -> UResult<()> {
-    let result = unsafe { signal(sig, SigDfl) };
-    if let Err(err) = result {
-        return Err(USimpleError::new(
-            125,
-            translate!("env-error-failed-set-signal-action", "signal" => (sig as i32), "error" => err.desc()),
-        ));
-    }
-    Ok(())
+fn ignore_signal(sig_value: usize) -> io::Result<()> {
+    set_signal_handler(sig_value, libc::SIG_IGN)
 }
 
 #[cfg(unix)]
-fn block_signal(sig: Signal) -> UResult<()> {
-    let mut set = SigSet::empty();
-    set.add(sig);
-    if let Err(err) = sigprocmask(SigmaskHow::SIG_BLOCK, Some(&set), None) {
-        return Err(USimpleError::new(
-            125,
-            translate!(
-                "env-error-failed-set-signal-action",
-                "signal" => (sig as i32),
-                "error" => err.desc()
-            ),
-        ));
+fn reset_signal(sig_value: usize) -> io::Result<()> {
+    set_signal_handler(sig_value, libc::SIG_DFL)
+}
+
+#[cfg(unix)]
+fn block_signal(sig_value: usize) -> io::Result<()> {
+    let mut set = std::mem::MaybeUninit::<libc::sigset_t>::uninit();
+
+    // SAFETY: sigemptyset initializes the sigset_t pointed to by the provided pointer.
+    if unsafe { libc::sigemptyset(set.as_mut_ptr()) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    // SAFETY: sigemptyset initialized the value above.
+    let mut set = unsafe { set.assume_init() };
+
+    // SAFETY: sigaddset and sigprocmask accept any runtime signal number supported by libc.
+    if unsafe { libc::sigaddset(&mut set, sig_value as libc::c_int) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if unsafe { libc::sigprocmask(libc::SIG_BLOCK, &set, std::ptr::null_mut()) } != 0 {
+        return Err(io::Error::last_os_error());
     }
     Ok(())
 }
@@ -1123,7 +1122,8 @@ fn list_signal_handling(log: &SignalActionLog) {
             SignalActionKind::Ignore => "IGNORE",
             SignalActionKind::Block => "BLOCK",
         };
-        let signal_name = signal_name_by_value(sig_value).unwrap_or("?");
+        let signal_name =
+            signal_action_name_by_value(sig_value).unwrap_or_else(|| sig_value.to_string());
         eprintln!("{signal_name:<10} ({}): {action}", sig_value as i32);
     }
 }
