@@ -4155,6 +4155,7 @@ dependencies = [
  "fluent",
  "foldhash 0.2.0",
  "itertools 0.14.0",
+ "libc",
  "memchr",
  "nix",
  "rand 0.10.1",

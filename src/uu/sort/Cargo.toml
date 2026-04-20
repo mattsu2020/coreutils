@@ -47,10 +47,11 @@ uucore = { workspace = true, features = [
 fluent = { workspace = true }
 foldhash = { workspace = true }
 
-[target.'cfg(not(any(target_os = "redox", target_os = "wasi")))'.dependencies]
+[target.'cfg(windows)'.dependencies]
 ctrlc = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
 nix = { workspace = true, features = ["resource"] }
 
 [dev-dependencies]

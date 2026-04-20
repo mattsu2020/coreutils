@@ -5,7 +5,7 @@
 
 #[cfg(not(any(target_os = "redox", target_os = "wasi")))]
 use std::path::Path;
-#[cfg(not(any(target_os = "redox", target_os = "wasi")))]
+#[cfg(all(unix, not(any(target_os = "redox", target_os = "wasi"))))]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
     fs::File,
@@ -23,8 +23,7 @@ use crate::SortError;
 /// A wrapper around [`TempDir`] that may only exist once in a process.
 ///
 /// `TmpDirWrapper` handles the allocation of new temporary files in this temporary directory and
-/// deleting the whole directory when `SIGINT` is received. Creating a second `TmpDirWrapper` will
-/// fail because `ctrlc::set_handler()` fails when there's already a handler.
+/// deleting the whole directory when `SIGINT` is received.
 /// The directory is only created once the first file is requested.
 pub struct TmpDirWrapper {
     temp_dir: Option<TempDir>,
@@ -44,12 +43,84 @@ struct HandlerRegistration {
 static HANDLER_STATE: LazyLock<Arc<Mutex<HandlerRegistration>>> =
     LazyLock::new(|| Arc::new(Mutex::new(HandlerRegistration::default())));
 
-#[cfg(not(any(target_os = "redox", target_os = "wasi")))]
+// Unix implementation: block SIGINT and spawn a thread that calls sigwait.
+// This replicates what ctrlc does internally on Unix, but without the ctrlc dependency.
+#[cfg(all(unix, not(any(target_os = "redox", target_os = "wasi"))))]
 fn ensure_signal_handler_installed(state: Arc<Mutex<HandlerRegistration>>) -> UResult<()> {
-    // This shared state must originate from `HANDLER_STATE` so the handler always sees
-    // the current lock/path pair and can clean up the active temp directory on SIGINT.
-    // Install a shared SIGINT handler so the active temp directory is deleted when the user aborts.
-    // Guard to ensure the SIGINT handler is registered once per process and reused.
+    static HANDLER_INSTALLED: AtomicBool = AtomicBool::new(false);
+
+    if HANDLER_INSTALLED
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return Ok(());
+    }
+
+    // SAFETY: pthread_sigmask is always safe to call from single-threaded context
+    // (before any threads are spawned). The signal set is properly initialized.
+    let ret = unsafe {
+        let mut mask: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut mask);
+        libc::sigaddset(&mut mask, libc::SIGINT);
+        libc::pthread_sigmask(libc::SIG_BLOCK, &mask, std::ptr::null_mut())
+    };
+
+    if ret != 0 {
+        HANDLER_INSTALLED.store(false, Ordering::Release);
+        return Err(USimpleError::new(
+            2,
+            translate!(
+                "sort-failed-to-set-up-signal-handler",
+                "error" => std::io::Error::last_os_error()
+            ),
+        ));
+    }
+
+    let handler_state = state.clone();
+    std::thread::spawn(move || {
+        // SAFETY: sigwait is safe when called with a properly initialized signal set
+        // and SIGINT is blocked in this thread (inherited from the parent).
+        let ret = unsafe {
+            let mut mask: libc::sigset_t = std::mem::zeroed();
+            libc::sigemptyset(&mut mask);
+            libc::sigaddset(&mut mask, libc::SIGINT);
+            let mut sig: libc::c_int = 0;
+            libc::sigwait(&mask, &mut sig);
+            sig
+        };
+
+        if ret == libc::SIGINT {
+            // SIGINT received — clean up the active temp directory.
+            let (lock, path) = {
+                let state = handler_state.lock().unwrap();
+                (state.lock.clone(), state.path.clone())
+            };
+
+            if let Some(lock) = lock {
+                let _guard = lock.lock().unwrap();
+                if let Some(path) = path {
+                    if let Err(e) = remove_tmp_dir(&path) {
+                        show_error!(
+                            "{}",
+                            translate!(
+                                "sort-failed-to-delete-temporary-directory",
+                                "error" => e
+                            )
+                        );
+                    }
+                }
+            }
+
+            std::process::exit(2);
+        }
+    });
+
+    Ok(())
+}
+
+// Windows implementation: keep using ctrlc (which uses SetConsoleCtrlHandler).
+#[cfg(all(not(unix), not(any(target_os = "redox", target_os = "wasi"))))]
+fn ensure_signal_handler_installed(state: Arc<Mutex<HandlerRegistration>>) -> UResult<()> {
     static HANDLER_INSTALLED: AtomicBool = AtomicBool::new(false);
 
     if HANDLER_INSTALLED
@@ -61,7 +132,6 @@ fn ensure_signal_handler_installed(state: Arc<Mutex<HandlerRegistration>>) -> UR
 
     let handler_state = state.clone();
     if let Err(e) = ctrlc::set_handler(move || {
-        // Load the latest lock/path snapshot so the handler cleans the active temp dir.
         let (lock, path) = {
             let state = handler_state.lock().unwrap();
             (state.lock.clone(), state.path.clone())
