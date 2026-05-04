@@ -134,7 +134,7 @@ const POSITIVE: &u8 = &b'+';
 const MIN_AUTOMATIC_BUF_SIZE: usize = 512 * 1024; // 512 KiB
 const FALLBACK_AUTOMATIC_BUF_SIZE: usize = 32 * 1024 * 1024; // 32 MiB
 const MAX_AUTOMATIC_BUF_SIZE: usize = 1024 * 1024 * 1024; // 1 GiB
-const MAX_PRECOMPUTED_COLLATION_KEY_LINE_LEN: usize = 1024 * 1024; // 1 MiB
+const MAX_PRECOMPUTED_COLLATION_KEY_LINE_LEN: usize = u16::MAX as usize;
 
 #[derive(Debug, Error)]
 pub enum SortError {
