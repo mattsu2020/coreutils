@@ -92,6 +92,34 @@ fn sort_unique_utf8_locale(bencher: Bencher) {
     });
 }
 
+/// Benchmark long ASCII lines with UTF-8 locale collation
+#[divan::bench(args = [1_048_576])]
+fn sort_long_ascii_lines_utf8_locale(bencher: Bencher, line_size: usize) {
+    let mut data = Vec::with_capacity((line_size + 1) * 26);
+    for c in (b'a'..=b'z').rev() {
+        data.extend(std::iter::repeat_n(c, line_size));
+        data.push(b'\n');
+    }
+
+    let file_path = setup_test_file(&data);
+    let output_file = NamedTempFile::new().unwrap();
+    let output_path = output_file.path().to_str().unwrap().to_string();
+
+    let args = [
+        "--parallel",
+        "1",
+        "--buffer-size",
+        "8G",
+        "-o",
+        &output_path,
+        file_path.to_str().unwrap(),
+    ];
+    black_box(run_util_function(uumain, &args));
+    bencher.bench(|| {
+        black_box(run_util_function(uumain, &args));
+    });
+}
+
 fn main() {
     // Set UTF-8 locale BEFORE any benchmarks run.
     // This must happen before divan::main() because the locale is cached
