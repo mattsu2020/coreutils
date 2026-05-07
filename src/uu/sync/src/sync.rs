@@ -68,19 +68,25 @@ mod platform {
         // Reset O_NONBLOCK flag if it was set (matches GNU behavior)
         // This is non-critical, so we log errors but don't fail
         if let Err(e) = fcntl(&f, FcntlArg::F_SETFL(OFlag::empty())) {
-            eprintln!(
+            use std::io::{Write, stderr};
+            let _ = writeln!(
+                stderr(),
                 "sync: {}",
                 translate!("sync-warning-fcntl-failed", "file" => path, "error" => e.to_string())
             );
+            uucore::error::set_exit_code(1);
         }
         Ok(f)
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub fn do_syncfs(files: Vec<String>) -> UResult<()> {
+    pub fn do_sync_with<F>(files: Vec<String>, op: F) -> UResult<()>
+    where
+        F: Fn(File) -> Result<(), nix::Error>,
+    {
         for path in files {
             let f = open_and_reset_nonblock(&path)?;
-            syncfs(f).map_err_context(
+            op(f).map_err_context(
                 || translate!("sync-error-syncing-file", "file" => path.quote()),
             )?;
         }
@@ -88,14 +94,13 @@ mod platform {
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub fn do_syncfs(files: Vec<String>) -> UResult<()> {
+        do_sync_with(files, syncfs)
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn do_fdatasync(files: Vec<String>) -> UResult<()> {
-        for path in files {
-            let f = open_and_reset_nonblock(&path)?;
-            fdatasync(f).map_err_context(
-                || translate!("sync-error-syncing-file", "file" => path.quote()),
-            )?;
-        }
-        Ok(())
+        do_sync_with(files, fdatasync)
     }
 }
 
@@ -260,8 +265,12 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
     #[allow(clippy::if_same_then_else)]
     if matches.get_flag(options::FILE_SYSTEM) {
-        #[cfg(any(target_os = "linux", target_os = "android", target_os = "windows"))]
-        syncfs(files)?;
+        if files.is_empty() {
+            sync()?;
+        } else {
+            #[cfg(any(target_os = "linux", target_os = "android", target_os = "windows"))]
+            syncfs(files)?;
+        }
     } else if matches.get_flag(options::DATA) {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         fdatasync(files)?;
@@ -272,9 +281,9 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 }
 
 pub fn uu_app() -> Command {
-    Command::new(uucore::util_name())
+    Command::new("sync")
         .version(uucore::crate_version!())
-        .help_template(uucore::localized_help_template(uucore::util_name()))
+        .help_template(uucore::localized_help_template("sync"))
         .about(translate!("sync-about"))
         .override_usage(format_usage(&translate!("sync-usage")))
         .infer_long_args(true)

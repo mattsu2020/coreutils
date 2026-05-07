@@ -13,9 +13,9 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use clap::{Arg, ArgAction, Command, builder::ValueParser};
-use rand::rngs::ThreadRng;
 use rand::{
-    Rng,
+    RngExt as _,
+    rngs::ThreadRng,
     seq::{IndexedRandom, SliceRandom},
 };
 
@@ -172,10 +172,10 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 }
 
 pub fn uu_app() -> Command {
-    Command::new(uucore::util_name())
+    Command::new("shuf")
         .about(translate!("shuf-about"))
         .version(uucore::crate_version!())
-        .help_template(uucore::localized_help_template(uucore::util_name()))
+        .help_template(uucore::localized_help_template("shuf"))
         .override_usage(format_usage(&translate!("shuf-usage")))
         .infer_long_args(true)
         .arg(
@@ -276,9 +276,7 @@ fn split_seps(data: &[u8], sep: u8) -> Vec<&[u8]> {
     let predicted_capacity = data.len() / PREDICTED_LINE_LENGTH;
     let mut elements = Vec::with_capacity(predicted_capacity);
     elements.extend(data.split(|&b| b == sep));
-    if elements.last().is_some_and(|e| e.is_empty()) {
-        elements.pop();
-    }
+    let _ = elements.pop_if(|e| e.is_empty());
     elements
 }
 

@@ -206,11 +206,11 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 }
 
 pub fn uu_app() -> Command {
-    Command::new(uucore::util_name())
+    Command::new("more")
         .about(translate!("more-about"))
         .override_usage(format_usage(&translate!("more-usage")))
         .version(uucore::crate_version!())
-        .help_template(uucore::localized_help_template(uucore::util_name()))
+        .help_template(uucore::localized_help_template("more"))
         .infer_long_args(true)
         .arg(
             Arg::new(options::SILENT)
@@ -337,7 +337,7 @@ impl InputType {
 
 enum OutputType {
     Tty(Stdout),
-    Pipe(Box<dyn Write>),
+    Pipe(Stdout),
     #[cfg(test)]
     Test(Vec<u8>),
 }
@@ -375,7 +375,7 @@ fn setup_term() -> UResult<OutputType> {
         stdout.execute(EnterAlternateScreen)?.execute(Hide)?;
         Ok(OutputType::Tty(stdout))
     } else {
-        Ok(OutputType::Pipe(Box::new(stdout)))
+        Ok(OutputType::Pipe(stdout))
     }
 }
 
@@ -383,7 +383,7 @@ fn setup_term() -> UResult<OutputType> {
 #[inline(always)]
 fn setup_term() -> UResult<OutputType> {
     // no real stdout/tty on Fuchsia, just write into a pipe
-    Ok(OutputType::Pipe(Box::new(stdout())))
+    Ok(OutputType::Pipe(stdout()))
 }
 
 fn reset_term() -> UResult<()> {

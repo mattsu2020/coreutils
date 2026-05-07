@@ -7,6 +7,7 @@
 
 use std::borrow::Borrow;
 use std::ffi::OsString;
+use std::io;
 
 use clap::builder::ValueParser;
 use clap::{Arg, ArgAction, ArgMatches, Command, ValueHint};
@@ -48,6 +49,7 @@ macro_rules! declare_standalone {
                 ::uucore::translate!(concat!($bin, "-about")),
                 ::uucore::translate!(concat!($bin, "-usage")),
             )
+            .name($bin)
         }
     };
 }
@@ -62,7 +64,7 @@ pub fn standalone_with_length_main(
     algo: AlgoKind,
     cmd: Command,
     args: impl uucore::Args,
-    validate_len: fn(&str) -> UResult<Option<usize>>,
+    validate_len: fn(&str) -> UResult<usize>,
 ) -> UResult<()> {
     let matches = uucore::clap_localization::handle_clap_result(cmd, args)?;
     let algo = Some(algo);
@@ -71,8 +73,7 @@ pub fn standalone_with_length_main(
         .get_one::<String>(options::LENGTH)
         .map(String::as_str)
         .map(validate_len)
-        .transpose()?
-        .flatten();
+        .transpose()?;
 
     //todo: deduplicate matches.get_flag
     let text = !matches.get_flag(options::BINARY);
@@ -96,7 +97,7 @@ pub fn standalone_main(algo: AlgoKind, cmd: Command, args: impl uucore::Args) ->
 
 /// Base command processing for all the checksum executables.
 pub fn default_checksum_app(about: String, usage: String) -> Command {
-    Command::new(util_name())
+    Command::new("")
         .version(crate_version!())
         .help_template(localized_help_template(util_name()))
         .about(about)
@@ -164,7 +165,7 @@ pub fn checksum_main(
     let binary_flag = matches.get_flag(options::BINARY);
     let tag = matches.get_flag(options::TAG);
 
-    // clap provides the default value -. So we unwrap() safety.
+    #[allow(clippy::unwrap_used, reason = "clap provides '-' by default")]
     let files = matches
         .get_many::<OsString>(options::FILE)
         .unwrap()
@@ -213,7 +214,7 @@ pub fn checksum_main(
         line_ending,
     };
 
-    perform_checksum_computation(opts, files)?;
+    perform_checksum_computation(io::stdout(), opts, files)?;
 
     Ok(())
 }

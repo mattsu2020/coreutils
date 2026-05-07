@@ -131,12 +131,13 @@ fn test_delimiter_with_byte_and_char() {
         new_ucmd!()
             .args(&[conflicting_arg, COMPLEX_SEQUENCE.sequence, "-d="])
             .fails_with_code(1)
-            .stderr_is("cut: invalid input: The '--delimiter' ('-d') option only usable if printing a sequence of fields\n")
+            .stderr_is("cut: invalid input: The '--delimiter' ('-d') option can only be used when printing a sequence of fields\n")
 ;
     }
 }
 
 #[test]
+#[cfg_attr(wasi_runner, ignore = "WASI sandbox: host paths not visible")]
 fn test_too_large() {
     new_ucmd!()
         .args(&["-b1-18446744073709551615", "/dev/null"])
@@ -230,6 +231,21 @@ fn test_zero_terminated_only_delimited() {
 }
 
 #[test]
+fn test_suppresses_unterminated_segment() {
+    new_ucmd!()
+        .args(&["-z", "-d", "", "-s", "-f", "1"])
+        .pipe_in("unterminated")
+        .succeeds()
+        .stdout_only_bytes("");
+
+    new_ucmd!()
+        .args(&["-z", "-d", "", "-s", "-f", "1"])
+        .pipe_in("terminated\0unterminated")
+        .succeeds()
+        .stdout_only_bytes("terminated\0");
+}
+
+#[test]
 fn test_is_a_directory() {
     let (at, mut ucmd) = at_and_ucmd!();
 
@@ -263,22 +279,42 @@ fn test_equal_as_delimiter() {
 
 #[test]
 fn test_empty_string_as_delimiter() {
-    for arg in ["-d''", "--delimiter=", "--delimiter=''"] {
+    new_ucmd!()
+        .args(&["-f2", "--delimiter="])
+        .pipe_in("a\0b\n")
+        .succeeds()
+        .stdout_only("b\n");
+}
+
+#[test]
+fn test_single_quote_pair_as_delimiter_is_invalid() {
+    for args in [&["-d", "''", "-f2"][..], &["--delimiter=''", "-f2"][..]] {
         new_ucmd!()
-            .args(&["-f2", arg])
-            .pipe_in("a\0b\n")
-            .succeeds()
-            .stdout_only("b\n");
+            .args(args)
+            .ignore_stdin_write_error()
+            .pipe_in("a''b\n")
+            .fails()
+            .stderr_contains("cut: the delimiter must be a single character")
+            .no_stdout();
     }
 }
 
 #[test]
 fn test_empty_string_as_delimiter_with_output_delimiter() {
     new_ucmd!()
-        .args(&["-f", "1,2", "-d", "''", "--output-delimiter=Z"])
+        .args(&["-f", "1,2", "--delimiter=", "--output-delimiter=Z"])
         .pipe_in("ab\0cd\n")
         .succeeds()
         .stdout_only_bytes("abZcd\n");
+}
+
+#[test]
+fn test_single_quote_pair_as_output_delimiter_is_literal() {
+    new_ucmd!()
+        .args(&["-f", "1,2", "-d:", "--output-delimiter=''"])
+        .pipe_in("ab:cd\n")
+        .succeeds()
+        .stdout_only_bytes("ab''cd\n");
 }
 
 #[test]
@@ -535,6 +571,7 @@ fn test_multiple_mode_args() {
 
 #[test]
 #[cfg(unix)]
+#[cfg_attr(wasi_runner, ignore = "WASI: argv/filenames must be valid UTF-8")]
 fn test_8bit_non_utf8_delimiter() {
     use std::ffi::OsStr;
     use std::os::unix::ffi::OsStrExt;
@@ -601,6 +638,7 @@ fn test_failed_write_is_reported() {
 
 #[test]
 #[cfg(target_os = "linux")]
+#[cfg_attr(wasi_runner, ignore = "WASI: argv/filenames must be valid UTF-8")]
 fn test_cut_non_utf8_paths() {
     use std::fs::File;
     use std::io::Write;

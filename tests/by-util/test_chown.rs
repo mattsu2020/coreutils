@@ -4,8 +4,6 @@
 // file that was distributed with this source code.
 // spell-checker:ignore (words) agroupthatdoesntexist auserthatdoesntexist cuuser groupname notexisting passgrp
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
-use uucore::process::geteuid;
 use uutests::util::{CmdResult, TestScenario, is_ci, run_ucmd_as_root};
 use uutests::util_name;
 use uutests::{at_and_ucmd, new_ucmd};
@@ -149,7 +147,8 @@ fn test_chown_only_owner_colon() {
         .arg("--verbose")
         .arg(file1)
         .succeeds()
-        .stderr_contains("retained as");
+        .stderr_contains("retained as")
+        .stderr_contains("warning: '.' should be ':'");
 
     scene
         .ucmd()
@@ -158,6 +157,66 @@ fn test_chown_only_owner_colon() {
         .arg(file1)
         .fails()
         .stderr_contains("failed to change");
+}
+
+#[test]
+fn test_chown_dot_separator_warning() {
+    // test that using '.' as separator emits a warning
+
+    let scene = TestScenario::new(util_name!());
+    let at = &scene.fixtures;
+
+    let result = scene.cmd("whoami").run();
+    if skipping_test_is_okay(&result, "whoami: cannot find name for user ID") {
+        return;
+    }
+    let user_name = String::from(result.stdout_str().trim());
+    assert!(!user_name.is_empty());
+
+    let file1 = "test_chown_dot_warn";
+    at.touch(file1);
+
+    let result = scene.cmd("id").arg("-gn").run();
+    if skipping_test_is_okay(&result, "id: cannot find name for group ID") {
+        return;
+    }
+    let group_name = String::from(result.stdout_str().trim());
+    assert!(!group_name.is_empty());
+
+    // chown user. file should warn about '.' separator
+    scene
+        .ucmd()
+        .arg(format!("{user_name}."))
+        .arg(file1)
+        .succeeds()
+        .stderr_contains("warning: '.' should be ':'");
+
+    // chown user.group file should warn AND apply both owner and group
+    let result = scene
+        .ucmd()
+        .arg(format!("{user_name}.{group_name}"))
+        .arg("--verbose")
+        .arg(file1)
+        .run();
+    if skipping_test_is_okay(&result, "chown: invalid group:") {
+        return;
+    }
+    result.stderr_contains("warning: '.' should be ':'");
+    // "retained as" on Linux, "changed ownership" on BSDs (group inherited from parent dir)
+    assert!(
+        result.stderr_str().contains("retained as")
+            || result.stderr_str().contains("changed ownership"),
+        "expected verbose ownership output, got: {}",
+        result.stderr_str()
+    );
+
+    // chown user: file should not warn
+    scene
+        .ucmd()
+        .arg(format!("{user_name}:"))
+        .arg(file1)
+        .succeeds()
+        .stderr_does_not_contain("warning");
 }
 
 #[test]
@@ -494,7 +553,7 @@ fn test_chown_only_group_id() {
     }
     result.stderr_contains("retained as");
 
-    // Apparently on CI "macos-latest, x86_64-apple-darwin, feat_os_macos"
+    // Apparently on CI "macos-latest, x86_64-apple-darwin, feat_os_unix"
     // the process has the rights to change from runner:staff to runner:wheel
     #[cfg(any(windows, all(unix, not(target_os = "macos"))))]
     // FreeBSD user on CI is part of wheel group
@@ -689,7 +748,7 @@ fn test_root_preserve() {
 #[cfg(any(target_os = "linux", target_os = "android"))]
 #[test]
 fn test_big_p() {
-    if geteuid() != 0 {
+    if !rustix::process::geteuid().is_root() {
         new_ucmd!()
             .arg("-RP")
             .arg("bin")

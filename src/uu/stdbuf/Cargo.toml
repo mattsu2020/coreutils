@@ -4,7 +4,6 @@ name = "uu_stdbuf"
 description = "stdbuf ~ (uutils) run COMMAND with modified standard stream buffering"
 repository = "https://github.com/uutils/coreutils/tree/main/src/uu/stdbuf"
 version.workspace = true
-authors.workspace = true
 license.workspace = true
 homepage.workspace = true
 keywords.workspace = true
@@ -18,10 +17,12 @@ workspace = true
 
 [lib]
 path = "src/stdbuf.rs"
+test = false
+doctest = false
 
 [dependencies]
 clap = { workspace = true }
-libstdbuf = { package = "uu_stdbuf_libstdbuf", path = "src/libstdbuf" }
+libstdbuf = { package = "uu_stdbuf_libstdbuf", version = "0.8.0", path = "src/libstdbuf" }
 tempfile = { workspace = true }
 uucore = { workspace = true, features = ["parser-size"] }
 thiserror = { workspace = true }

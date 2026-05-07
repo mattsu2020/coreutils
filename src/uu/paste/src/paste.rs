@@ -42,9 +42,9 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 }
 
 pub fn uu_app() -> Command {
-    Command::new(uucore::util_name())
+    Command::new("paste")
         .version(uucore::crate_version!())
-        .help_template(uucore::localized_help_template(uucore::util_name()))
+        .help_template(uucore::localized_help_template("paste"))
         .about(translate!("paste-about"))
         .override_usage(format_usage(&translate!("paste-usage")))
         .infer_long_args(true)
@@ -273,11 +273,7 @@ fn parse_delimiters(delimiters: &OsString) -> UResult<Box<[Box<[u8]>]>> {
 }
 
 fn remove_trailing_line_ending_byte(line_ending_byte: u8, output: &mut Vec<u8>) {
-    if let Some(&byte) = output.last() {
-        if byte == line_ending_byte {
-            assert_eq!(output.pop(), Some(line_ending_byte));
-        }
-    }
+    let _ = output.pop_if(|byte| *byte == line_ending_byte);
 }
 
 enum DelimiterState<'a> {

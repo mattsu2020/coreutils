@@ -580,7 +580,7 @@ fn test_permission_denied_is_not_reported_as_not_found() {
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
 
-    if unsafe { libc::geteuid() } == 0 {
+    if rustix::process::geteuid().is_root() {
         return;
     }
 
@@ -647,7 +647,12 @@ fn test_follow_name_multiple() {
             .arg(FOOBAR_2_TXT)
             .run_no_wait();
 
+        #[cfg(target_os = "linux")]
         let delay = 100;
+        #[cfg(target_os = "macos")]
+        let delay = 2000;
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        let delay = 1000;
 
         child
             .make_assertion_with_delay(delay)
@@ -1573,7 +1578,7 @@ fn test_retry7() {
         "--use-polling",
     ];
 
-    let mut delay = 100;
+    let mut delay = 500;
     for _ in 0..2 {
         at.mkdir(untailable);
 
@@ -1721,14 +1726,14 @@ fn test_retry9() {
     );
     let expected_stdout = "foo\nbar\nfoo\nbar\n";
 
-    let delay = 100;
+    let delay = 400;
 
     at.mkdir(parent_dir);
     at.truncate(user_path, "foo\n");
     let mut p = ts
         .ucmd()
         .arg("-F")
-        .arg("-s.1")
+        .arg("-s.2")
         .arg("--max-unchanged-stats=1")
         .arg(user_path)
         .run_no_wait();
@@ -5076,6 +5081,21 @@ fn test_child_when_run_with_stderr_to_stdout() {
 fn test_failed_write_is_reported() {
     new_ucmd!()
         .pipe_in("hello")
+        .set_stdout(File::create("/dev/full").unwrap())
+        .fails()
+        .stderr_is("tail: No space left on device\n");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn test_failed_write_is_reported_on_seekable_input() {
+    let ts = TestScenario::new("tail");
+    let at = &ts.fixtures;
+
+    at.write("bigfile", &"x\n".repeat(1_100_000));
+
+    ts.ucmd()
+        .arg("bigfile")
         .set_stdout(File::create("/dev/full").unwrap())
         .fails()
         .stderr_is("tail: No space left on device\n");
