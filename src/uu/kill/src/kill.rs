@@ -6,16 +6,18 @@
 // spell-checker:ignore (ToDO) signalname pids killpg
 
 use clap::{Arg, ArgAction, Command};
-use nix::sys::signal::{self, Signal};
-use nix::unistd::Pid;
-use std::io::Error;
+use rustix::process::{
+    kill_current_process_group, kill_process, kill_process_group, test_kill_current_process_group,
+    test_kill_process, test_kill_process_group, Pid, Signal,
+};
+use std::cmp::Ordering;
 use uucore::display::Quotable;
 use uucore::error::{FromIo, UResult, USimpleError};
 use uucore::translate;
 
 use uucore::signals::{
     signal_by_name_or_value, signal_list_name_by_value, signal_list_value_by_name_or_number,
-    signal_name_by_value, signal_number_upper_bound,
+    signal_number_upper_bound,
 };
 use uucore::{format_usage, show};
 
@@ -66,18 +68,6 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
                 parse_signal_value(signal)?
             } else {
                 15_usize //SIGTERM
-            };
-
-            let sig_name = signal_name_by_value(sig);
-            // Signal does not support converting from EXIT
-            // Instead, nix::signal::kill expects Option::None to properly handle EXIT
-            let sig: Option<Signal> = if sig_name.is_some_and(|name| name == "EXIT") {
-                None
-            } else {
-                let sig = (sig as i32)
-                    .try_into()
-                    .map_err(|e| Error::from_raw_os_error(e as i32))?;
-                Some(sig)
             };
 
             let pids = parse_pids(&pids_or_signals)?;
@@ -250,12 +240,48 @@ fn parse_pids(pids: &[String]) -> UResult<Vec<i32>> {
         .collect()
 }
 
-fn kill(sig: Option<Signal>, pids: &[i32]) {
+fn kill(sig: usize, pids: &[i32]) {
     for &pid in pids {
-        if let Err(e) = signal::kill(Pid::from_raw(pid), sig) {
+        let result = match pid.cmp(&0) {
+            Ordering::Equal if sig == 0 => test_kill_current_process_group(),
+            Ordering::Equal => {
+                // SAFETY: sig > 0 guaranteed by control flow (sig==0 handled above).
+                // Signal validity ensured by signal_by_name_or_value; the kernel
+                // rejects invalid values with EINVAL.
+                kill_current_process_group(unsafe { Signal::from_raw_unchecked(sig as i32) })
+            }
+            Ordering::Greater => {
+                let pid = Pid::from_raw(pid)
+                    .expect("pid > 0 guaranteed by Ordering::Greater");
+                if sig == 0 {
+                    test_kill_process(pid)
+                } else {
+                    // SAFETY: sig > 0 and validated by signal_by_name_or_value
+                    kill_process(pid, unsafe { Signal::from_raw_unchecked(sig as i32) })
+                }
+            }
+            Ordering::Less => {
+                let Some(abs_pid) = pid.checked_neg() else {
+                    show!(USimpleError::new(
+                        1,
+                        translate!("kill-error-sending-signal", "pid" => pid),
+                    ));
+                    continue;
+                };
+                let pid = Pid::from_raw(abs_pid)
+                    .expect("abs_pid > 0 since pid < 0 and pid != i32::MIN");
+                if sig == 0 {
+                    test_kill_process_group(pid)
+                } else {
+                    // SAFETY: sig > 0 and validated by signal_by_name_or_value
+                    kill_process_group(pid, unsafe { Signal::from_raw_unchecked(sig as i32) })
+                }
+            }
+        };
+        if let Err(e) = result {
             show!(
-                Error::from_raw_os_error(e as i32)
-                    .map_err_context(|| { translate!("kill-error-sending-signal", "pid" => pid) })
+                std::io::Error::from(e)
+                    .map_err_context(|| translate!("kill-error-sending-signal", "pid" => pid))
             );
         }
     }
