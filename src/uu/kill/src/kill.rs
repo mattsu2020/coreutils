@@ -7,8 +7,8 @@
 
 use clap::{Arg, ArgAction, Command};
 use rustix::process::{
-    kill_current_process_group, kill_process, kill_process_group, test_kill_current_process_group,
-    test_kill_process, test_kill_process_group, Pid, Signal,
+    Pid, Signal, kill_current_process_group, kill_process, kill_process_group,
+    test_kill_current_process_group, test_kill_process, test_kill_process_group,
 };
 use std::cmp::Ordering;
 use uucore::display::Quotable;
@@ -251,8 +251,7 @@ fn kill(sig: usize, pids: &[i32]) {
                 kill_current_process_group(unsafe { Signal::from_raw_unchecked(sig as i32) })
             }
             Ordering::Greater => {
-                let pid = Pid::from_raw(pid)
-                    .expect("pid > 0 guaranteed by Ordering::Greater");
+                let pid = Pid::from_raw(pid).expect("pid > 0 guaranteed by Ordering::Greater");
                 if sig == 0 {
                     test_kill_process(pid)
                 } else {
@@ -268,8 +267,8 @@ fn kill(sig: usize, pids: &[i32]) {
                     ));
                     continue;
                 };
-                let pid = Pid::from_raw(abs_pid)
-                    .expect("abs_pid > 0 since pid < 0 and pid != i32::MIN");
+                let pid =
+                    Pid::from_raw(abs_pid).expect("abs_pid > 0 since pid < 0 and pid != i32::MIN");
                 if sig == 0 {
                     test_kill_process_group(pid)
                 } else {
