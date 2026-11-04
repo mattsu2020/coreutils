@@ -46,7 +46,7 @@ mod login {
     use core::ffi::CStr;
     use std::ffi::CString;
     use std::ptr;
-    use std::time::SystemTime;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     /// Get all active sessions
     pub fn get_sessions() -> Result<Vec<String>, Box<dyn std::error::Error>> {
@@ -253,25 +253,20 @@ mod login {
         Ok(Some(seat_string))
     }
 
-    /// Get system boot time using systemd random-seed file fallback
-    ///
-    /// TODO: This replicates GNU coreutils' fallback behavior for compatibility.
-    /// GNU coreutils uses the mtime of /var/lib/systemd/random-seed as a heuristic for boot time
-    /// when utmp is unavailable, rather than querying systemd's authoritative `KernelTimestamp`.
-    /// This creates inconsistency: `uptime -s` shows the actual kernel boot time
-    /// while `who -b` shows ~1 minute later when systemd services start.
-    ///
-    /// Ideally, both should use the same source (`KernelTimestamp`) for semantic consistency.
-    /// Consider proposing to GNU coreutils to use systemd's `KernelTimestamp` property instead.
+    pub(super) fn boot_time_from_proc_stat(contents: &str) -> Option<SystemTime> {
+        contents.lines().find_map(|line| {
+            line.strip_prefix("btime ")
+                .and_then(|seconds| seconds.parse::<u64>().ok())
+                .map(|seconds| UNIX_EPOCH + std::time::Duration::from_secs(seconds))
+        })
+    }
+
+    /// Get the system boot time using the kernel's `/proc/stat` value.
     pub fn get_boot_time() -> Result<SystemTime, Box<dyn std::error::Error>> {
-        use std::fs;
-
-        let metadata = fs::metadata("/var/lib/systemd/random-seed")
-            .map_err(|e| format!("Failed to read /var/lib/systemd/random-seed: {e}"))?;
-
-        metadata
-            .modified()
-            .map_err(|e| format!("Failed to get modification time: {e}").into())
+        let proc_stat = std::fs::read_to_string("/proc/stat")
+            .map_err(|e| format!("Failed to read /proc/stat: {e}"))?;
+        boot_time_from_proc_stat(&proc_stat)
+            .ok_or_else(|| "Failed to find btime in /proc/stat".into())
     }
 }
 
@@ -659,6 +654,19 @@ impl Iterator for SystemdUtmpxIter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_boot_time_from_proc_stat() {
+        let boot_time = login::boot_time_from_proc_stat(
+            "cpu  1 2 3 4 5 6 7 8 9 10\nbtime 1234567890\nprocesses 42\n",
+        );
+
+        assert_eq!(
+            boot_time,
+            Some(UNIX_EPOCH + std::time::Duration::from_secs(1_234_567_890))
+        );
+        assert!(login::boot_time_from_proc_stat("cpu 1 2 3\n").is_none());
+    }
 
     #[test]
     fn test_empty_iterator() {
